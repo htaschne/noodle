@@ -1,4 +1,4 @@
-# Moodle Notification Service
+# Noodle 🍜 Notification Service for Moodle
 
 
 ## Docs
