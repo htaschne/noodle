@@ -1,0 +1,18 @@
+meta {
+  name: Get My Courses
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{process.env.MOODLE_URL}}/webservice/rest/server.php
+  body: formUrlEncoded
+  auth: none
+}
+
+body:form-urlencoded {
+  wstoken: {{authToken}}
+  wsfunction: core_enrol_get_users_courses
+  moodlewsrestformat: json
+  userid: {{userId}}
+}

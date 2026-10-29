@@ -15,3 +15,19 @@ body:form-urlencoded {
   password: {{process.env.MOODLE_PASSWORD}}
   service: {{process.env.MOODLE_SERVICE}}
 }
+
+script:post-response {
+  const response = res.getBody();
+
+  bru.setVar("authToken", "");
+
+  if (
+    res.getStatus() === 200 &&
+    response &&
+    typeof response === "object" &&
+    typeof response.token === "string" &&
+    response.token.trim().length > 0
+  ) {
+    bru.setVar("authToken", response.token);
+  }
+}

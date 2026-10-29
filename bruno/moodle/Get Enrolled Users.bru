@@ -1,7 +1,7 @@
 meta {
   name: Get Enrolled Users
   type: http
-  seq: 4
+  seq: 5
 }
 
 post {
@@ -11,8 +11,8 @@ post {
 }
 
 body:form-urlencoded {
-  wstoken: {{process.env.MOODLE_TOKEN}}
+  wstoken: {{authToken}}
   wsfunction: core_enrol_get_enrolled_users
   moodlewsrestformat: json
-  courseid: {{process.env.MOODLE_COURSE_ID}}
+  courseid: {{courseId}}
 }

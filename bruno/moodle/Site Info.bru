@@ -11,7 +11,24 @@ post {
 }
 
 body:form-urlencoded {
-  wstoken: {{process.env.MOODLE_TOKEN}}
+  wstoken: {{authToken}}
   wsfunction: core_webservice_get_site_info
   moodlewsrestformat: json
+}
+
+script:post-response {
+  const response = res.getBody();
+
+  bru.setVar("userId", "");
+
+  if (
+    res.getStatus() === 200 &&
+    response &&
+    typeof response === "object" &&
+    response.userid !== undefined &&
+    response.userid !== null &&
+    String(response.userid).trim().length > 0
+  ) {
+    bru.setVar("userId", response.userid);
+  }
 }

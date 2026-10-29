@@ -1,7 +1,7 @@
 meta {
   name: Get Submissions
   type: http
-  seq: 5
+  seq: 6
 }
 
 post {
@@ -11,8 +11,8 @@ post {
 }
 
 body:form-urlencoded {
-  wstoken: {{process.env.MOODLE_TOKEN}}
+  wstoken: {{authToken}}
   wsfunction: mod_assign_get_submissions
   moodlewsrestformat: json
-  assignmentids[0]: {{process.env.MOODLE_ASSIGNMENT_ID}}
+  assignmentids[0]: {{assignmentId}}
 }
