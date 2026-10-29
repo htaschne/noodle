@@ -1,0 +1,17 @@
+meta {
+  name: Site Info
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{process.env.MOODLE_URL}}/webservice/rest/server.php
+  body: formUrlEncoded
+  auth: none
+}
+
+body:form-urlencoded {
+  wstoken: {{process.env.MOODLE_TOKEN}}
+  wsfunction: core_webservice_get_site_info
+  moodlewsrestformat: json
+}

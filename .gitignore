@@ -1,0 +1,5 @@
+.env
+bruno/.env
+.env.*
+!.env.example
+bruno/secrets.json

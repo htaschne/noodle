@@ -1,0 +1,18 @@
+meta {
+  name: Get Assignments
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{process.env.MOODLE_URL}}/webservice/rest/server.php
+  body: formUrlEncoded
+  auth: none
+}
+
+body:form-urlencoded {
+  wstoken: {{process.env.MOODLE_TOKEN}}
+  wsfunction: mod_assign_get_assignments
+  moodlewsrestformat: json
+  courseids[0]: {{process.env.MOODLE_COURSE_ID}}
+}
