@@ -3,7 +3,7 @@ FROM golang:1.27-alpine AS builder
 WORKDIR /app
 
 COPY go.mod ./
-COPY main.go ./
+COPY main.go moodle.go ./
 
 RUN CGO_ENABLED=0 go build -o monitoring .
 
