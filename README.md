@@ -20,6 +20,44 @@ To run the Moodle Monitoring Service run:
 docker build -t moodle-monitoring ./monitoring
 ```
 
+Each Go microservice owns its Go module, Dockerfile, and image. Docker Compose is only used for local infrastructure and does not make Monitoring depend on RabbitMQ at build time.
+
+## RabbitMQ
+
+Set `RABBITMQ_USER` and `RABBITMQ_PASSWORD` in the root `.env`, then start the local broker:
+
+```sh
+docker compose up -d rabbitmq
+```
+
+Check its container and broker health:
+
+```sh
+docker compose ps
+docker compose exec rabbitmq rabbitmq-diagnostics -q ping
+```
+
+The management interface is available at [http://localhost:15672](http://localhost:15672). AMQP is exposed at `localhost:5672`. Both ports are bound only to the local machine.
+
+Independently running Go services connect to these endpoints:
+
+- From the host: `amqp://localhost:5672`
+- From another container on the Compose network: `amqp://rabbitmq:5672`
+
+These are host and port endpoints, not complete authenticated connection strings. Services must supply the configured credentials separately and must not embed passwords in source code or documentation.
+
+Stop RabbitMQ while preserving its named data volume:
+
+```sh
+docker compose down
+```
+
+To intentionally remove the persisted broker data as well:
+
+```sh
+docker compose down --volumes
+```
+
 ## API testing with Bruno
 
 Install [Bruno](https://www.usebruno.com/downloads), then configure the root `.env`:
