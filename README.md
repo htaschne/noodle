@@ -32,28 +32,29 @@ cp .env.example .env
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, or `error` |
 | `RABBITMQ_USER` | For local RabbitMQ | `noodle` | Local broker username |
 | `RABBITMQ_PASSWORD` | For local RabbitMQ | — | Local broker password |
-| `RABBITMQ_URL` | When candidates are published | — | Complete authenticated AMQP URL used by Monitoring |
+| `RABBITMQ_URL` | When candidates are published | — | Complete authenticated AMQP URL used by Monitoring; URL-encode credentials |
 
 Do not commit `.env`.
 
-### Running each service
+### Running Noodle
 
-Build and run the Monitoring service:
+Start, follow logs, and stop the local stack:
+
+```sh
+docker compose up --build -d
+docker compose logs -f
+docker compose down
+```
+
+Build Monitoring independently:
 
 ```sh
 docker build -t noodle-monitoring:latest ./monitoring
-docker run --rm --name noodle-monitoring --env-file .env noodle-monitoring:latest
 ```
 
-Each Go microservice owns its Go module, Dockerfile, and image. Docker Compose is only used for local infrastructure and does not make Monitoring depend on RabbitMQ at build time.
+Each Go microservice owns its Go module, Dockerfile, and image. Mailpit is available at [http://localhost:8025](http://localhost:8025).
 
 ## RabbitMQ
-
-After completing Prerequisites Part 2, start the local broker:
-
-```sh
-docker compose up -d rabbitmq
-```
 
 The management interface is available at [http://localhost:15672](http://localhost:15672). AMQP is exposed at `localhost:5672`. Both ports are bound only to the local machine.
 

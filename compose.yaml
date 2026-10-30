@@ -16,5 +16,34 @@ services:
       timeout: 5s
       retries: 10
 
+  monitoring:
+    build:
+      context: ./monitoring
+    env_file:
+      - .env
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL is required}
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        compose_url="$$(printf '%s' "$$RABBITMQ_URL" | sed -E 's#^amqps?://(([^/@]+)@)?[^/?]+(:[0-9]+)?(.*)$$#amqp://\1rabbitmq:5672\4#')"
+        case "$$compose_url" in
+          amqp://*@rabbitmq:5672*) ;;
+          *) echo "RABBITMQ_URL must be a complete authenticated AMQP URL" >&2; exit 1 ;;
+        esac
+        export RABBITMQ_URL="$$compose_url"
+        exec ./monitoring
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "127.0.0.1:8025:8025"
+    expose:
+      - "1025"
+
 volumes:
   rabbitmq_data:
