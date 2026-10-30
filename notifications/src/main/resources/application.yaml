@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: notifications
+  main:
+    banner-mode: off
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER}
+    password: ${RABBITMQ_PASSWORD}
+    listener:
+      simple:
+        acknowledge-mode: manual
+        default-requeue-rejected: false
+        prefetch: 1
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+notifications:
+  database-path: ${NOTIFICATIONS_DB_PATH:./data/notifications.db}
+  mail:
+    from: ${SMTP_FROM:noodle@example.test}
+  delivery:
+    max-attempts: 3
+    retry-delay: 500ms
+
+logging:
+  level:
+    org.springframework.amqp.rabbit.connection.CachingConnectionFactory: WARN

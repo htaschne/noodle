@@ -4,3 +4,4 @@ bruno/.env
 !.env.example
 bruno/secrets.json
 monitoring/monitoring
+notifications/target/

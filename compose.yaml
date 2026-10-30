@@ -45,5 +45,26 @@ services:
     expose:
       - "1025"
 
+  notifications:
+    build:
+      context: ./notifications
+    env_file:
+      - .env
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      NOTIFICATIONS_DB_PATH: /data/notifications.db
+    volumes:
+      - notifications_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    stop_grace_period: 30s
+
 volumes:
   rabbitmq_data:
+  notifications_data:

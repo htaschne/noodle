@@ -1,6 +1,6 @@
 # Noodle 🍜 Notification Service for Moodle
 
-Noodle (Notification Service for Moodle) is composed of independently deployable Go microservices. The Bruno collection in this repository is a development tool for exploring Moodle's REST API; it is not a runtime dependency of either service.
+Noodle (Notification Service for Moodle) is composed of independently deployable services. The Bruno collection in this repository is a development tool for exploring Moodle's REST API; it is not a runtime dependency of the application services.
 
 ## Docs
 
@@ -12,7 +12,7 @@ Click [here](./docs/ARCHITECTURE.md) to check our architecture decisions
 
 #### Part 1 — Tools
 
-Install [Docker](https://docs.docker.com/get-started/get-docker/). Install Go 1.27 when running or testing Monitoring outside Docker.
+Install [Docker](https://docs.docker.com/get-started/get-docker/). For development outside Docker, Monitoring requires Go 1.27, while Notifications requires Java 25 and Maven.
 
 #### Part 2 — Environment
 
@@ -33,6 +33,9 @@ cp .env.example .env
 | `RABBITMQ_USER` | For local RabbitMQ | `noodle` | Local broker username |
 | `RABBITMQ_PASSWORD` | For local RabbitMQ | — | Local broker password |
 | `RABBITMQ_URL` | When candidates are published | — | Complete authenticated AMQP URL used by Monitoring; URL-encode credentials |
+| `SMTP_HOST` | No | `localhost` | SMTP host used outside Compose |
+| `SMTP_PORT` | No | `1025` | SMTP port used outside Compose |
+| `SMTP_FROM` | No | `noodle@example.test` | Reminder sender address |
 
 Do not commit `.env`.
 
@@ -46,13 +49,17 @@ docker compose logs -f
 docker compose down
 ```
 
-Build Monitoring independently:
+Build either service independently:
 
 ```sh
 docker build -t noodle-monitoring:latest ./monitoring
+docker build -t noodle-notifications:latest ./notifications
 ```
 
-Each Go microservice owns its Go module, Dockerfile, and image. Mailpit is available at [http://localhost:8025](http://localhost:8025).
+Each application service owns its build, Dockerfile, and image. Mailpit is available at [http://localhost:8025](http://localhost:8025).
+
+Notifications records delivered reminder IDs in SQLite after SMTP succeeds. A crash between those operations can cause a duplicate email when RabbitMQ redelivers the message; delivery is not exactly once.
+After three failed SMTP attempts, a reminder is rejected without requeue; no dead-letter queue is configured yet.
 
 ## RabbitMQ
 
