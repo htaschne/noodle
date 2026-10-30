@@ -25,28 +25,13 @@ Create a local environment file:
 cp .env.example .env
 ```
 
-User needs to add missing fields: moodle credentials and token
+then add missing the empty fields with your credentials into `.env` you just created:
 
-| Variable | Used by | Requirement or default |
-| --- | --- | --- |
-| `MOODLE_USERNAME` | Monitoring | Required web-service username |
-| `MOODLE_PASSWORD` | Monitoring | Required web-service password |
-| `MOODLE_TOKEN` | Monitoring | Required Moodle base URL |
-| `MOODLE_URL` | Monitoring | default to `https://moodle.pucrs.br`|
-| `MOODLE_SERVICE` | Monitoring | default to `moodle_mobile_app` |
-| `MONITOR_INTERVAL` | Monitoring | default to `1h`; must be positive Go duration |
-| `LOG_LEVEL` | Monitoring | default to `info`; one of `debug`, `info`, `warn`, or `error` |
-| `RABBITMQ_USER` | RabbitMQ, Notifications | Required by Compose |
-| `RABBITMQ_PASSWORD` | RabbitMQ, Notifications | Required by Compose |
-| `RABBITMQ_URL` | Monitoring | Complete authenticated AMQP URL; required by Compose |
-| `RABBITMQ_HOST` | Notifications | `localhost` outside Compose; Compose uses `rabbitmq` |
-| `RABBITMQ_PORT` | Notifications | `5672` |
-| `SMTP_HOST` | Notifications | `localhost` outside Compose; Compose uses `mailpit` |
-| `SMTP_PORT` | Notifications | `1025` |
-| `SMTP_FROM` | Notifications | `noodle@example.test` |
-| `NOTIFICATIONS_DB_PATH` | Notifications | `./data/notifications.db`; Compose uses `/data/notifications.db` |
-
-Credentials containing URL-special characters must be encoded in `RABBITMQ_URL`.
+``` sh
+MOODLE_USERNAME=
+MOODLE_PASSWORD=
+MOODLE_TOKEN=
+```
 
 ### Run
 
