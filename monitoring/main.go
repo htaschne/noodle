@@ -39,6 +39,7 @@ type cycleSummary struct {
 	enrolledStudents         int
 	submissions              int
 	candidates               int
+	publishedReminders       int
 	warningCount             int
 	warningCountsByOperation map[string]int
 	warningGroups            map[warningKey]*warningGroup
@@ -56,6 +57,13 @@ type warningGroup struct {
 }
 
 type warningCounts map[string]int
+
+type reminderPublisher interface {
+	Publish(context.Context, reminderMessage) error
+	Close() error
+}
+
+type reminderPublisherFactory func(context.Context) (reminderPublisher, error)
 
 func (counts warningCounts) LogValue() slog.Value {
 	operations := make([]string, 0, len(counts))
@@ -90,8 +98,11 @@ func main() {
 		cfg.moodleService,
 		&http.Client{Timeout: defaultHTTPTimeout},
 	)
-
-	logger.Info("monitoring service started", "interval", cfg.monitorInterval, "log_level", cfg.logLevel.String())
+	logger.Info(
+		"monitoring service started",
+		"interval", cfg.monitorInterval,
+		"log_level", cfg.logLevel.String(),
+	)
 	run(ctx, client, cfg.monitorInterval, logger)
 	logger.Info("monitoring service stopped")
 }
@@ -205,6 +216,7 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 		return fmt.Errorf("get courses: %w", err)
 	}
 	summary := newCycleSummary(len(courses))
+	cycleCandidates := make([]reminderCandidate, 0)
 	logger.Info("discovered courses", "count", summary.courses)
 
 	for _, course := range courses {
@@ -310,6 +322,7 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 
 			summary.submissions += identification.SubmissionCount
 			summary.candidates += len(identification.Candidates)
+			cycleCandidates = append(cycleCandidates, identification.Candidates...)
 			_, statuses := summarizeSubmissions(submissionResponse)
 			logger.Debug(
 				"submissions retrieved",
@@ -327,6 +340,14 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 		}
 	}
 
+	published, err := publishReminderCandidates(ctx, newReminderPublisher, cycleCandidates, logger)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("publish reminder candidates: %w", err)
+	}
+	summary.publishedReminders = published
 	summary.logAggregatedWarnings(logger)
 	logger.Info(
 		"monitoring cycle completed",
@@ -337,6 +358,7 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 		"enrolled_students", summary.enrolledStudents,
 		"submissions", summary.submissions,
 		"candidates", summary.candidates,
+		"published_reminders", summary.publishedReminders,
 		"moodle_warnings", summary.warningCount,
 		"warning_counts_by_operation", warningCounts(summary.warningCountsByOperation),
 		"coverage", summary.coverage(),
@@ -492,4 +514,63 @@ func logSubmissionFailure(logger *slog.Logger, courseID, assignmentID int64, err
 		attributes = append(attributes, "moodle_code", apiErr.ErrorCode, "moodle_message", apiErr.Message)
 	}
 	logger.Error("could not retrieve submissions", attributes...)
+}
+
+func publishReminderCandidates(
+	ctx context.Context,
+	newPublisher reminderPublisherFactory,
+	candidates []reminderCandidate,
+	logger *slog.Logger,
+) (int, error) {
+	if len(candidates) == 0 {
+		return 0, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	publisher, err := newPublisher(ctx)
+	if err != nil {
+		logger.Error("could not initialize RabbitMQ publisher", "error", err)
+		return 0, fmt.Errorf("initialize RabbitMQ publisher: %w", err)
+	}
+
+	published := 0
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return published, errors.Join(err, publisher.Close())
+		}
+		message := newReminderMessage(
+			candidate.CourseID,
+			candidate.AssignmentID,
+			candidate.UserID,
+			candidate.Email,
+			candidate.Assignment,
+			candidate.DueDate,
+		)
+		if err := publisher.Publish(ctx, message); err != nil {
+			if ctx.Err() != nil {
+				return published, errors.Join(ctx.Err(), publisher.Close())
+			}
+			publishErr := errors.Join(err, publisher.Close())
+			logger.Error(
+				"could not publish reminder candidate",
+				"course_id", candidate.CourseID,
+				"assignment_id", candidate.AssignmentID,
+				"published", published,
+				"error", publishErr,
+			)
+			return published, fmt.Errorf("publish reminder candidate: %w", publishErr)
+		}
+		published++
+	}
+	if err := publisher.Close(); err != nil {
+		logger.Error("could not close RabbitMQ publisher", "published", published, "error", err)
+		return published, fmt.Errorf("close RabbitMQ publisher: %w", err)
+	}
+	return published, nil
+}
+
+func newReminderPublisher(ctx context.Context) (reminderPublisher, error) {
+	return newRabbitMQPublisher(ctx)
 }

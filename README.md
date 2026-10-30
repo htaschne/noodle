@@ -10,21 +10,46 @@ Click [here](./docs/ARCHITECTURE.md) to check our architecture decisions
 
 ### Prerequisites
 
-[Docker](https://docs.docker.com/get-started/get-docker/) is installed
+#### Part 1 — Tools
+
+Install [Docker](https://docs.docker.com/get-started/get-docker/). Install Go 1.27 when running or testing Monitoring outside Docker.
+
+#### Part 2 — Environment
+
+Create the local environment file and fill in the blank values:
+
+```sh
+cp .env.example .env
+```
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `MOODLE_URL` | Yes | — | Moodle base URL |
+| `MOODLE_USERNAME` | Yes | — | Moodle web-service username |
+| `MOODLE_PASSWORD` | Yes | — | Moodle web-service password |
+| `MOODLE_SERVICE` | No | `moodle_mobile_app` | Moodle external-service name |
+| `MONITOR_INTERVAL` | No | `1h` | Monitoring interval as a positive Go duration |
+| `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, or `error` |
+| `RABBITMQ_USER` | For local RabbitMQ | `noodle` | Local broker username |
+| `RABBITMQ_PASSWORD` | For local RabbitMQ | — | Local broker password |
+| `RABBITMQ_URL` | When candidates are published | — | Complete authenticated AMQP URL used by Monitoring |
+
+Do not commit `.env`.
 
 ### Running each service
 
-To run the Moodle Monitoring Service run:
+Build and run the Monitoring service:
 
 ```sh
-docker build -t moodle-monitoring ./monitoring
+docker build -t noodle-monitoring:latest ./monitoring
+docker run --rm --name noodle-monitoring --env-file .env noodle-monitoring:latest
 ```
 
 Each Go microservice owns its Go module, Dockerfile, and image. Docker Compose is only used for local infrastructure and does not make Monitoring depend on RabbitMQ at build time.
 
 ## RabbitMQ
 
-Set `RABBITMQ_USER` and `RABBITMQ_PASSWORD` in the root `.env`, then start the local broker:
+After completing Prerequisites Part 2, start the local broker:
 
 ```sh
 docker compose up -d rabbitmq
@@ -60,12 +85,6 @@ docker compose down --volumes
 
 ## API testing with Bruno
 
-Install [Bruno](https://www.usebruno.com/downloads), then configure the root `.env`:
-
-```sh
-cp .env.example .env
-```
-
-Export the root `.env` values into the Bruno process and open [`bruno/`](./bruno). Run **Get Token** → **Site Info** → **Get My Courses** → **Get Assignments** → **Get Submissions**; run **Get Enrolled Users** after selecting a course.
+After completing Prerequisites Part 2, install [Bruno](https://www.usebruno.com/downloads), export the root `.env` values into the Bruno process, and open [`bruno/`](./bruno). Run **Get Token** → **Site Info** → **Get My Courses** → **Get Assignments** → **Get Submissions**; run **Get Enrolled Users** after selecting a course.
 
 When a request needs a course or assignment ID, Bruno Desktop prompts for it. Copy the ID from the preceding response; the collection does not select results automatically or store credentials.

@@ -1,35 +1,22 @@
 # Moodle Monitoring Service
 
-The monitoring service is a long-running worker that authenticates with Moodle, discovers the current user's courses, finds individual assignments due in the next 24 hours, and identifies enrolled students with explicit incomplete submission states. It only creates in-memory candidate records and does not send email, publish messages, or modify Moodle data. The cycle repeats after `MONITOR_INTERVAL` (default `1h`).
+The monitoring service is a long-running worker that authenticates with Moodle, discovers the current user's courses, finds individual assignments due in the next 24 hours, identifies enrolled students with explicit incomplete submission states, and publishes reminder candidates to RabbitMQ. It does not send email or modify Moodle data. The cycle repeats after `MONITOR_INTERVAL` (default `1h`).
 
-## Configuration
+## Running and testing
 
-The worker reads configuration from the process environment. It does not load `.env` files itself.
+Complete [Prerequisites Part 2](../README.md#part-2--environment) before running the worker. The worker reads the process environment and does not load `.env` files itself.
 
-| Variable | Required | Default | Purpose |
-| --- | --- | --- | --- |
-| `MOODLE_URL` | Yes | — | Moodle base URL |
-| `MOODLE_USERNAME` | Yes | — | Web-service account username |
-| `MOODLE_PASSWORD` | Yes | — | Web-service account password |
-| `MOODLE_SERVICE` | No | `moodle_mobile_app` | Moodle external-service name |
-| `MONITOR_INTERVAL` | No | `1h` | Positive Go duration between cycles |
-| `LOG_LEVEL` | No | `info` | Logging threshold: `debug`, `info`, `warn`, or `error` |
-
-For local development, export the root configuration before starting the worker:
+From the repository root:
 
 ```sh
-cd monitoring
-set -a
-. ../.env
-set +a
-go run .
+docker build -t noodle-monitoring:latest ./monitoring
+docker run --rm --name noodle-monitoring --env-file .env noodle-monitoring:latest
 ```
 
-From the repository root, build and run the container with:
+Run the unit tests from `monitoring/`:
 
 ```sh
-docker build -t noodle-monitoring ./monitoring
-docker run --rm --env-file .env noodle-monitoring
+go test ./...
 ```
 
 Stop the process or container with `SIGINT` or `SIGTERM` for graceful shutdown. Moodle may limit which submissions are returned based on the authenticated account's permissions; an empty submissions array is logged only as an observed count, not interpreted as submission completion.
@@ -42,4 +29,4 @@ An assignment is eligible only when its standard deadline is in the UTC interval
 
 Student roles are identified by Moodle's semantic role shortname (`student`), not by installation-specific numeric role IDs. Standard staff shortnames (`manager`, `coursecreator`, `editingteacher`, and `teacher`) are excluded. Unrecognized custom roles are treated as ambiguous and are not included.
 
-For submissions, `submitted` is complete. Explicit latest-attempt states `new`, `draft`, and `reopened` are incomplete; unknown statuses, conflicting statuses for the same attempt, and users without a submission record are not classified. A returned assignment entry with an empty submission list is a successful empty result but produces no candidates. A missing assignment entry, API failure, or any Moodle warning makes that assignment's submission data unavailable, so the service logs the limitation and skips it. This fail-closed behavior means the web-service account must be allowed to view complete per-student submission states before downstream notification delivery can be added.
+For submissions, `submitted` is complete. Explicit latest-attempt states `new`, `draft`, and `reopened` are incomplete; unknown statuses, conflicting statuses for the same attempt, and users without a submission record are not classified. A returned assignment entry with an empty submission list is a successful empty result but produces no candidates. A missing assignment entry, API failure, or any Moodle warning makes that assignment's submission data unavailable, so the service logs the limitation and skips it. This fail-closed behavior means the web-service account must be allowed to view complete per-student submission states before candidates can be published.
