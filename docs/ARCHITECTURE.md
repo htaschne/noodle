@@ -1,212 +1,107 @@
-# Moodle Student Reengagement — Architecture
+# Architecture
 
 ## Overview
 
-This project implements a student reengagement service integrated with Moodle. It detects individual assignments due within the next 24 hours that a student has not submitted, then requests an email reminder.
-
-The system consists of **two independently buildable and deployable microservices in one Git repository**. The services communicate asynchronously through RabbitMQ. Docker Compose provides a convenient local integration environment, but neither service depends on Compose for deployment.
-
-> **Source and design choices:** The two services, Moodle REST integration, RabbitMQ, SMTP/Mailpit, and the 24-hour reminder rule come from the course specification. Separate Go modules, per-service Dockerfiles, SQLite persistence, and independent CI are proposed implementation choices, not explicit requirements.
-
-## System architecture
+Noodle is a pair of asynchronous workers. Monitoring reads Moodle and publishes reminder requests. Notifications consumes those requests, sends email through SMTP, and persists successful message IDs for deduplication. Neither service exposes an HTTP endpoint or imports code from the other.
 
 ```mermaid
 flowchart LR
-    Moodle[(Moodle)] <-->|REST API| Monitoring[Monitoring service<br/>Go module A]
-    Monitoring -->|Publish reminder requests| RabbitMQ[(RabbitMQ)]
-    RabbitMQ -->|Consume requests| Notifications[Notifications service<br/>Go module B]
-    Notifications -->|SMTP| Mailpit[Mailpit / SMTP server]
-    Notifications <--> DB[(SQLite<br/>notification state)]
+    Moodle[(Moodle)] <-->|REST API| Monitoring[Monitoring<br/>Go]
+    Monitoring -->|persistent JSON| RabbitMQ[(RabbitMQ<br/>noodle.reminders)]
+    RabbitMQ -->|manual delivery| Notifications[Notifications<br/>Java / Spring Boot]
+    Notifications -->|SMTP| Mailpit[Mailpit]
+    Notifications -->|delivery IDs| SQLite[(SQLite)]
 ```
 
-### Service responsibilities
+Docker Compose provides the local deployment topology. Moodle remains external to the stack.
 
-**Monitoring**
-- Periodically queries Moodle (normally hourly; configurable for demonstrations).
-- Retrieves assignments, enrolled students, and submission states.
-- Identifies pending individual assignments with deadlines in the next 24 hours.
-- Publishes reminder requests to RabbitMQ.
-- Does not send email or access the notifications database.
+## Service boundaries
 
-**Notifications**
-- Consumes reminder requests from RabbitMQ.
-- Checks a stable identifier derived from course, assignment, and student to prevent resending completed reminders.
-- Formats and sends reminder emails through SMTP.
-- Records outcomes and handles failed processing and retries.
-- Does not query Moodle.
+### Monitoring
 
-### Moodle APIs
+Monitoring is a long-running Go process. It starts a cycle immediately, then waits for `MONITOR_INTERVAL` before starting the next cycle. Each cycle:
 
-| Moodle function | Purpose |
+1. Authenticates with Moodle using a username, password, and service name.
+2. Retrieves site information and discovers every course visible to the authenticated user.
+3. Retrieves assignments for each course.
+4. Keeps individual assignments with submissions enabled and a standard deadline in `(now, now + 24 hours]`.
+5. Retrieves enrolled users and submission records only for courses and assignments that pass the deadline filter.
+6. Identifies candidates only when student role and incomplete submission state are explicit.
+7. Publishes the resulting reminder requests to RabbitMQ.
+
+Student roles are classified from Moodle role names. Mixed student and staff roles are treated as staff, while missing or unknown roles are ambiguous. Submission states `new`, `draft`, and `reopened` are incomplete; `submitted` is complete. Missing records, unknown states, conflicting records for the same attempt, and submission warnings do not produce candidates.
+
+The service fails closed when Moodle data is unavailable or ambiguous. Assignment warnings and skipped data mark the cycle's reported coverage as partial. When a cycle produces no candidates, Monitoring does not connect to RabbitMQ.
+
+Monitoring performs read-oriented Moodle calls only. It does not update Moodle or send email.
+
+### Notifications
+
+Notifications is a Spring Boot worker. It validates each message, checks SQLite for the deterministic message ID, and sends a plain-text reminder through SMTP. The email contains the assignment name, due time, and an instruction to submit through Moodle; no assignment URL is generated.
+
+After SMTP accepts the email, Notifications inserts the message ID into the `delivered_notifications` table. The primary-key constraint prevents a recorded ID from being stored twice and the Compose volume preserves the database across restarts.
+
+RabbitMQ acknowledgments are manual:
+
+- Successful deliveries are acknowledged after the SQLite record is written.
+- Previously recorded IDs are acknowledged without another email.
+- Invalid messages are rejected without requeue.
+- SMTP or persistence failures are rejected without requeue after processing fails.
+
+SMTP delivery is attempted up to three times with a 500 ms delay. There is no dead-letter queue.
+
+## Moodle integration
+
+Monitoring sends form-encoded HTTP `POST` requests and expects JSON responses. The HTTP client has a 30-second timeout.
+
+| Endpoint or function | Purpose |
 | --- | --- |
-| `mod_assign_get_assignments` | Retrieve assignments and deadlines |
-| `core_enrol_get_enrolled_users` | Retrieve enrolled students |
-| `mod_assign_get_submissions` | Identify submitted assignments |
+| `/login/token.php` | Obtain a web-service token |
+| `core_webservice_get_site_info` | Resolve the authenticated Moodle user |
+| `core_enrol_get_users_courses` | Discover the user's courses |
+| `mod_assign_get_assignments` | Retrieve course assignments and deadlines |
+| `core_enrol_get_enrolled_users` | Retrieve users, roles, and email addresses |
+| `mod_assign_get_submissions` | Retrieve per-assignment submission states |
 
-API permissions, user email visibility, and actual response formats must be verified against the Moodle instance used.
+Monitoring obtains a new token during every cycle. Moodle credentials and tokens are redacted from API errors and warnings; reminder payloads and email addresses are not logged by application code.
 
-## Repository structure
+## RabbitMQ topology
 
-```text
-moodle-reengagement/
-├── monitoring/
-│   ├── go.mod
-│   ├── go.sum                  # created when dependencies are resolved
-│   ├── Dockerfile
-│   ├── cmd/
-│   │   └── main.go
-│   └── internal/
-│       ├── moodle/             # Moodle REST client
-│       ├── scheduler/          # periodic polling
-│       └── publisher/          # RabbitMQ producer
-│
-├── notifications/
-│   ├── go.mod
-│   ├── go.sum
-│   ├── Dockerfile
-│   ├── cmd/
-│   │   └── main.go
-│   └── internal/
-│       ├── consumer/           # RabbitMQ consumer
-│       ├── email/              # SMTP delivery
-│       └── persistence/        # idempotency and delivery records
-│
-├── contracts/
-│   └── reminder-request.schema.json  # optional shared message specification
-├── .github/
-│   └── workflows/
-│       ├── monitoring.yml
-│       └── notifications.yml
-├── compose.yaml
-├── .gitignore
-└── README.md
-```
+Both services declare one durable queue named `noodle.reminders`. Monitoring publishes to RabbitMQ's default exchange with `noodle.reminders` as the routing key. Messages are marked persistent, and Monitoring waits for a publisher confirmation before counting a publication as successful.
 
-Each service owns its dependencies, executable, Dockerfile, and tests. **Neither service imports the other's implementation.** The optional contract file documents the RabbitMQ payload without requiring a shared Go package.
-
-## Build and deployment boundaries
-
-```mermaid
-flowchart TB
-    Repo[One Git repository]
-    Repo --> M[monitoring/]
-    Repo --> N[notifications/]
-    M --> MB[Independent Go build]
-    N --> NB[Independent Go build]
-    MB --> MI[Monitoring Docker image]
-    NB --> NI[Notifications Docker image]
-    MI --> MD[Deploy monitoring independently]
-    NI --> ND[Deploy notifications independently]
-    Repo --> Compose[Root compose.yaml<br/>local orchestration only]
-```
-
-Initialize the two modules separately (replace the GitHub repository path if necessary):
-
-```bash
-mkdir -p moodle-reengagement/{monitoring,notifications}
-cd moodle-reengagement
-git init
-(cd monitoring && go mod init github.com/htaschne/moodle-reengagement/monitoring)
-(cd notifications && go mod init github.com/htaschne/moodle-reengagement/notifications)
-```
-
-Build the binaries independently after adding their `main.go` files:
-
-```bash
-(cd monitoring && go build ./cmd)
-(cd notifications && go build ./cmd)
-```
-
-Build the container images independently after adding their Dockerfiles:
-
-```bash
-docker build -t moodle-monitoring ./monitoring
-docker build -t moodle-notifications ./notifications
-```
-
-A root `compose.yaml` will start RabbitMQ, Mailpit, and both services together for local integration tests. Moodle may run in that stack or be an externally provided test instance. Production or independent deployment can use the same service images without Compose.
-
-## Message contract
-
-The monitoring service publishes a self-contained request. An illustrative payload is:
+The JSON contract is defined by Monitoring and consumed directly by Notifications:
 
 ```json
 {
-  "id": "course-12-assignment-45-student-78",
-  "course_id": 12,
-  "assignment_id": 45,
-  "student_id": 78,
-  "student_email": "student@example.com",
-  "assignment_name": "Final Assignment",
-  "deadline": "2026-11-20T23:59:00-03:00",
-  "assignment_url": "https://moodle.example/mod/assign/view.php?id=123"
+  "id": "95406:123456:42",
+  "course_id": 95406,
+  "assignment_id": 123456,
+  "student_id": 42,
+  "email": "student@example.test",
+  "assignment_name": "Trabalho 2",
+  "due_at": "2026-10-31T15:00:00Z"
 }
 ```
 
-The exact schema, versioning policy, queue names, and link generation should be confirmed during implementation.
+The message ID is deterministic: `course_id:assignment_id:student_id`.
 
-## Reminder processing flow
+## Delivery guarantees
 
-```mermaid
-sequenceDiagram
-    participant S as Scheduler
-    participant M as Moodle REST API
-    participant Q as RabbitMQ
-    participant N as Notifications
-    participant D as SQLite
-    participant E as SMTP / Mailpit
-    S->>M: Fetch assignments, enrollments, submissions
-    M-->>S: Course data
-    Note over S: Keep only unsubmitted tasks<br/>due in (now, now + 24h]
-    S->>Q: Publish reminder request
-    Q->>N: Deliver request
-    N->>D: Check reminder ID and status
-    alt Already completed
-        N->>Q: Acknowledge (no resend)
-    else Not completed
-        N->>E: Send reminder email
-        E-->>N: SMTP result
-        N->>D: Record successful delivery
-        N->>Q: Acknowledge
-    end
-```
+RabbitMQ publication is confirmed, message consumption uses manual acknowledgments, and successful IDs persist in SQLite. These mechanisms provide durable handoff and restart-safe duplicate suppression for recorded deliveries, but they do not provide exactly-once email delivery.
 
-**Reliability note:** The consumer should acknowledge a message only after the relevant processing result is durable. Failures should be recorded and retried with bounded backoff or a dead-letter strategy. A crash after SMTP accepts an email but before the database records success can still cause a duplicate on retry: ordinary SMTP plus a local database does **not** guarantee exactly-once delivery. We should explicitly document and test the chosen behavior.
+SMTP acceptance and the SQLite insert are separate operations. A process failure after SMTP succeeds but before SQLite records the ID can cause a duplicate if the message is delivered again. Conversely, a message that exhausts its SMTP retries is rejected without requeue because no dead-letter topology is configured.
 
-## Scope and acceptance criteria
+## Local deployment
 
-The initial implementation handles **one Moodle course**, individual assignments visible to the class, a single deadline per assignment, and at most one completed reminder per student/assignment. Group submissions, individualized extensions, a custom UI, and channels other than email are out of scope. Assignments without a deadline, already overdue, or already submitted are ignored.
+The root `compose.yaml` runs four services:
 
-| Scenario | Expected result |
-| --- | --- |
-| Unsubmitted assignment due within 24 hours | Reminder sent |
-| Already submitted assignment | No reminder |
-| Deadline outside the next 24 hours | No reminder |
-| Reprocessing an already completed request | No new reminder |
-| Delivery/processing failure | Failure recorded and retry attempted |
+| Service | Local exposure | Persistence | Dependencies |
+| --- | --- | --- | --- |
+| `rabbitmq` | `127.0.0.1:5672`, `127.0.0.1:15672` | `rabbitmq_data` | — |
+| `monitoring` | None | None | Healthy RabbitMQ |
+| `mailpit` | `127.0.0.1:8025`; SMTP `1025` is internal | None | — |
+| `notifications` | None | `notifications_data` | Healthy RabbitMQ, started Mailpit |
 
-Use fictitious student accounts and Mailpit for acceptance tests.
+Compose rewrites Monitoring's RabbitMQ host to `rabbitmq`, configures Notifications to use `rabbitmq:5672` and `mailpit:1025`, and stores its SQLite database at `/data/notifications.db`.
 
-## CI and ownership
-
-Two independent GitHub Actions workflows can run tests and build images only when the corresponding service or its workflow changes. Changes to the message contract should trigger validation for **both** services. Each service can be versioned and released independently, even though Git history is shared.
-
-## Delivery milestones
-
-| Date (2026) | Checkpoint |
-| --- | --- |
-| October 9 | Demand gathering and questions to the partner |
-| November 6 | Full-flow validation and adjustments |
-| November 20 | Source code, documentation, test evidence, and presentation |
-
-The final deliverable is a **public GitHub repository** containing both services, an installation/use guide, and test records; the course also requires an individual extension report.
-
-## Design principles
-
-1. **One repository, two services:** a monorepo does not imply a monolith.
-2. **Independent Go modules:** no shared dependency graph is required.
-3. **Independent Docker images:** build and deploy either service without rebuilding the other.
-4. **Communication through contracts:** RabbitMQ is the runtime boundary; no direct imports between services.
-5. **Data ownership:** only notifications owns its delivery-state database.
-6. **Compose for integration:** orchestration is separate from service identity.
-7. **Prefer the smallest correct solution:** prioritize the specified behavior and demonstrable failure handling over unnecessary infrastructure.
+Monitoring and Notifications retain separate dependency manifests, Dockerfiles, images, and runtime processes. Compose is local orchestration rather than a build-time dependency between them.
