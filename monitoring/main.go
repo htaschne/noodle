@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 const (
 	defaultMonitorInterval = time.Hour
 	defaultHTTPTimeout     = 30 * time.Second
+	operationAssignments   = "get_assignments"
+	operationSubmissions   = "get_submissions"
 )
 
 type config struct {
@@ -25,21 +28,57 @@ type config struct {
 	moodlePassword  string
 	moodleService   string
 	monitorInterval time.Duration
+	logLevel        slog.Level
 }
 
 type cycleSummary struct {
-	courses     int
-	assignments int
-	submissions int
+	courses                  int
+	assignments              int
+	eligibleAssignments      int
+	skippedAssignments       int
+	enrolledStudents         int
+	submissions              int
+	candidates               int
+	warningCount             int
+	warningCountsByOperation map[string]int
+	warningGroups            map[warningKey]*warningGroup
+	partialCoverage          bool
+}
+
+type warningKey struct {
+	operation string
+	code      string
+}
+
+type warningGroup struct {
+	count   int
+	message string
+}
+
+type warningCounts map[string]int
+
+func (counts warningCounts) LogValue() slog.Value {
+	operations := make([]string, 0, len(counts))
+	for operation := range counts {
+		operations = append(operations, operation)
+	}
+	sort.Strings(operations)
+
+	attributes := make([]slog.Attr, 0, len(operations))
+	for _, operation := range operations {
+		attributes = append(attributes, slog.Int(operation, counts[operation]))
+	}
+	return slog.GroupValue(attributes...)
 }
 
 func main() {
-	logger := newLogger()
 	cfg, err := loadConfig()
 	if err != nil {
+		logger := newLogger(slog.LevelInfo)
 		logger.Error("invalid configuration", "error", err)
 		os.Exit(1)
 	}
+	logger := newLogger(cfg.logLevel)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -52,13 +91,16 @@ func main() {
 		&http.Client{Timeout: defaultHTTPTimeout},
 	)
 
-	logger.Info("monitoring service started", "interval", cfg.monitorInterval)
+	logger.Info("monitoring service started", "interval", cfg.monitorInterval, "log_level", cfg.logLevel.String())
 	run(ctx, client, cfg.monitorInterval, logger)
 	logger.Info("monitoring service stopped")
 }
 
-func newLogger() *slog.Logger {
+func newLogger(level slog.Level) *slog.Logger {
+	levelVar := new(slog.LevelVar)
+	levelVar.Set(level)
 	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: levelVar,
 		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
 			if attr.Key == slog.TimeKey {
 				return slog.String(slog.TimeKey, attr.Value.Time().UTC().Format(time.RFC3339))
@@ -76,6 +118,7 @@ func loadConfig() (config, error) {
 		moodlePassword:  os.Getenv("MOODLE_PASSWORD"),
 		moodleService:   os.Getenv("MOODLE_SERVICE"),
 		monitorInterval: defaultMonitorInterval,
+		logLevel:        slog.LevelInfo,
 	}
 
 	if cfg.moodleURL == "" {
@@ -105,7 +148,20 @@ func loadConfig() (config, error) {
 		}
 		cfg.monitorInterval = interval
 	}
-
+	if rawLogLevel := strings.TrimSpace(os.Getenv("LOG_LEVEL")); rawLogLevel != "" {
+		switch strings.ToLower(rawLogLevel) {
+		case "debug":
+			cfg.logLevel = slog.LevelDebug
+		case "info":
+			cfg.logLevel = slog.LevelInfo
+		case "warn":
+			cfg.logLevel = slog.LevelWarn
+		case "error":
+			cfg.logLevel = slog.LevelError
+		default:
+			return config{}, fmt.Errorf("LOG_LEVEL must be one of debug, info, warn, error")
+		}
+	}
 	return cfg, nil
 }
 
@@ -130,7 +186,7 @@ func run(ctx context.Context, client *moodleClient, interval time.Duration, logg
 }
 
 func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger) error {
-	startedAt := time.Now()
+	startedAt := time.Now().UTC()
 	logger.Info("monitoring cycle started")
 
 	token, err := client.authenticate(ctx)
@@ -148,8 +204,7 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 	if err != nil {
 		return fmt.Errorf("get courses: %w", err)
 	}
-
-	summary := cycleSummary{courses: len(courses)}
+	summary := newCycleSummary(len(courses))
 	logger.Info("discovered courses", "count", summary.courses)
 
 	for _, course := range courses {
@@ -162,6 +217,7 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			summary.partialCoverage = true
 			logger.Error("could not retrieve assignments", "course_id", course.ID, "course", displayCourseName(course), "error", err)
 			continue
 		}
@@ -170,60 +226,215 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 		for _, assignmentCourse := range assignmentResponse.Courses {
 			assignmentCount += len(assignmentCourse.Assignments)
 		}
-		logger.Info("course assignments discovered", "course_id", course.ID, "course", displayCourseName(course), "assignments", assignmentCount)
-		logWarnings(logger, "get assignments", assignmentResponse.Warnings)
+		summary.assignments += assignmentCount
+		logger.Debug("assignments retrieved", "course_id", course.ID, "count", assignmentCount)
+		summary.recordWarnings(logger, operationAssignments, course.ID, 0, assignmentResponse.Warnings)
 
+		now := time.Now().UTC()
+		eligibleAssignments := make([]assignment, 0, assignmentCount)
 		for _, assignmentCourse := range assignmentResponse.Courses {
-			courseName := assignmentCourse.FullName
-			if courseName == "" {
-				courseName = displayCourseName(course)
-			}
-
-			for _, assignment := range assignmentCourse.Assignments {
-				summary.assignments++
-				submissionResponse, err := client.getSubmissions(ctx, token, assignment.ID)
-				if err != nil {
-					if ctx.Err() != nil {
-						return ctx.Err()
-					}
-					logger.Error(
-						"could not retrieve submissions",
-						"course_id", assignmentCourse.ID,
-						"course", courseName,
-						"assignment_id", assignment.ID,
-						"assignment", assignment.Name,
-						"error", err,
-					)
-					continue
+			for _, candidate := range assignmentCourse.Assignments {
+				if isAssignmentEligible(candidate, now) {
+					eligibleAssignments = append(eligibleAssignments, candidate)
 				}
-
-				submissionCount, statuses := summarizeSubmissions(submissionResponse)
-				summary.submissions += submissionCount
-				logger.Info(
-					"assignment submissions retrieved",
-					"course_id", assignmentCourse.ID,
-					"course", courseName,
-					"assignment_id", assignment.ID,
-					"assignment", assignment.Name,
-					"due", formatDueDate(assignment.DueDate),
-					"team_submission", assignment.TeamSubmission != 0,
-					"no_submissions", assignment.NoSubmissions != 0,
-					"submissions", submissionCount,
-					"statuses", statuses,
-				)
-				logWarnings(logger, "get submissions", submissionResponse.Warnings)
 			}
+		}
+		summary.eligibleAssignments += len(eligibleAssignments)
+		summary.skippedAssignments += assignmentCount - len(eligibleAssignments)
+		logger.Debug(
+			"assignments filtered",
+			"course_id", course.ID,
+			"eligible", len(eligibleAssignments),
+			"skipped", assignmentCount-len(eligibleAssignments),
+		)
+		if len(eligibleAssignments) == 0 {
+			continue
+		}
+
+		enrolledUsers, err := client.getEnrolledUsers(ctx, token, course.ID)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			summary.partialCoverage = true
+			logger.Error("could not retrieve enrolled users", "course_id", course.ID, "error", err)
+			continue
+		}
+		studentCount, ambiguousRoleCount := countEnrolmentRoles(enrolledUsers)
+		summary.enrolledStudents += studentCount
+		logger.Debug("enrolled students retrieved", "course_id", course.ID, "students", studentCount)
+		if ambiguousRoleCount > 0 {
+			summary.partialCoverage = true
+			logger.Warn(
+				"enrolment roles could not be classified",
+				"course_id", course.ID,
+				"ambiguous_users", ambiguousRoleCount,
+				"reason", "unrecognized or missing Moodle role shortnames",
+			)
+		}
+
+		for _, assignment := range eligibleAssignments {
+			submissionResponse, err := client.getSubmissions(ctx, token, assignment.ID)
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				summary.partialCoverage = true
+				logSubmissionFailure(logger, course.ID, assignment.ID, err)
+				logger.Debug("assignment skipped", "course_id", course.ID, "assignment_id", assignment.ID, "reason", "submission data unavailable")
+				continue
+			}
+
+			summary.recordWarnings(logger, operationSubmissions, course.ID, assignment.ID, submissionResponse.Warnings)
+			identification := identifyReminderCandidates(course.ID, assignment, enrolledUsers, submissionResponse)
+			if !identification.SubmissionDataOK {
+				summary.partialCoverage = true
+				logger.Warn(
+					"submission data unavailable",
+					"course_id", course.ID,
+					"assignment_id", assignment.ID,
+					"reason", identification.UnavailableReason,
+				)
+				logger.Debug("assignment skipped", "course_id", course.ID, "assignment_id", assignment.ID, "reason", "submission data unavailable")
+				continue
+			}
+			if identification.UnclassifiedStudents > 0 {
+				summary.partialCoverage = true
+				logger.Warn(
+					"student submission states could not be classified",
+					"course_id", course.ID,
+					"assignment_id", assignment.ID,
+					"unclassified_students", identification.UnclassifiedStudents,
+				)
+			}
+
+			summary.submissions += identification.SubmissionCount
+			summary.candidates += len(identification.Candidates)
+			_, statuses := summarizeSubmissions(submissionResponse)
+			logger.Debug(
+				"submissions retrieved",
+				"course_id", course.ID,
+				"assignment_id", assignment.ID,
+				"submissions", identification.SubmissionCount,
+				"statuses", statuses,
+			)
+			logger.Debug(
+				"reminder candidates identified",
+				"course_id", course.ID,
+				"assignment_id", assignment.ID,
+				"candidates", len(identification.Candidates),
+			)
 		}
 	}
 
+	summary.logAggregatedWarnings(logger)
 	logger.Info(
 		"monitoring cycle completed",
 		"courses", summary.courses,
 		"assignments", summary.assignments,
+		"eligible_assignments", summary.eligibleAssignments,
+		"skipped_assignments", summary.skippedAssignments,
+		"enrolled_students", summary.enrolledStudents,
 		"submissions", summary.submissions,
+		"candidates", summary.candidates,
+		"moodle_warnings", summary.warningCount,
+		"warning_counts_by_operation", warningCounts(summary.warningCountsByOperation),
+		"coverage", summary.coverage(),
 		"duration", time.Since(startedAt).Round(time.Millisecond),
 	)
 	return nil
+}
+
+func newCycleSummary(courses int) cycleSummary {
+	return cycleSummary{
+		courses:                  courses,
+		warningCountsByOperation: make(map[string]int),
+		warningGroups:            make(map[warningKey]*warningGroup),
+	}
+}
+
+func (summary *cycleSummary) recordWarnings(logger *slog.Logger, operation string, courseID, assignmentID int64, warnings []moodleWarning) {
+	for _, warning := range warnings {
+		code := strings.TrimSpace(warning.WarningCode)
+		if code == "" {
+			code = "unknown"
+		}
+
+		summary.warningCount++
+		summary.warningCountsByOperation[operation]++
+		summary.partialCoverage = true
+
+		key := warningKey{operation: operation, code: code}
+		group := summary.warningGroups[key]
+		if group == nil {
+			group = &warningGroup{message: warning.Message}
+			summary.warningGroups[key] = group
+		}
+		group.count++
+		if group.message == "" && warning.Message != "" {
+			group.message = warning.Message
+		}
+
+		attributes := []any{
+			"operation", operation,
+			"moodle_code", code,
+			"moodle_message", warning.Message,
+			"course_id", courseID,
+		}
+		if assignmentID > 0 {
+			attributes = append(attributes, "assignment_id", assignmentID)
+		}
+		if warning.Item != "" {
+			attributes = append(attributes, "item", warning.Item)
+		}
+		if warning.ItemID > 0 {
+			attributes = append(attributes, "item_id", warning.ItemID)
+		}
+		logger.Debug("Moodle returned warning", attributes...)
+	}
+}
+
+func (summary *cycleSummary) logAggregatedWarnings(logger *slog.Logger) {
+	keys := make([]warningKey, 0, len(summary.warningGroups))
+	for key := range summary.warningGroups {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(left, right int) bool {
+		if keys[left].operation == keys[right].operation {
+			return keys[left].code < keys[right].code
+		}
+		return keys[left].operation < keys[right].operation
+	})
+
+	for _, key := range keys {
+		group := summary.warningGroups[key]
+		logger.Warn(
+			"Moodle warnings reduced monitoring coverage",
+			"operation", key.operation,
+			"moodle_code", key.code,
+			"count", group.count,
+			"moodle_message", group.message,
+		)
+	}
+}
+
+func (summary *cycleSummary) coverage() string {
+	if summary.partialCoverage {
+		return "partial"
+	}
+	return "complete"
+}
+
+func countEnrolmentRoles(users []enrolledUser) (students, ambiguous int) {
+	for _, user := range users {
+		switch classifyEnrolmentRole(user.Roles) {
+		case roleStudent:
+			students++
+		case roleAmbiguous:
+			ambiguous++
+		}
+	}
+	return students, ambiguous
 }
 
 func displayCourseName(course moodleCourse) string {
@@ -269,17 +480,16 @@ func summarizeSubmissions(response submissionsResponse) (int, string) {
 	return total, strings.Join(statuses, ",")
 }
 
-func logWarnings(logger *slog.Logger, operation string, warnings []moodleWarning) {
-	if len(warnings) == 0 {
-		return
+func logSubmissionFailure(logger *slog.Logger, courseID, assignmentID int64, err error) {
+	attributes := []any{
+		"course_id", courseID,
+		"assignment_id", assignmentID,
+		"reason", "request failed",
+		"error", err,
 	}
-
-	codes := make([]string, 0, len(warnings))
-	for _, warning := range warnings {
-		if warning.WarningCode != "" {
-			codes = append(codes, warning.WarningCode)
-		}
+	var apiErr *moodleAPIError
+	if errors.As(err, &apiErr) {
+		attributes = append(attributes, "moodle_code", apiErr.ErrorCode, "moodle_message", apiErr.Message)
 	}
-	sort.Strings(codes)
-	logger.Warn("Moodle returned warnings", "operation", operation, "count", len(warnings), "codes", strings.Join(codes, ","))
+	logger.Error("could not retrieve submissions", attributes...)
 }

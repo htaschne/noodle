@@ -71,6 +71,19 @@ type assignment struct {
 	NoSubmissions  int    `json:"nosubmissions"`
 }
 
+type enrolledUser struct {
+	ID       int64        `json:"id"`
+	FullName string       `json:"fullname"`
+	Email    string       `json:"email"`
+	Roles    []moodleRole `json:"roles"`
+}
+
+type moodleRole struct {
+	ID        int64  `json:"roleid"`
+	Name      string `json:"name"`
+	ShortName string `json:"shortname"`
+}
+
 type submissionsResponse struct {
 	Assignments []assignmentSubmissions `json:"assignments"`
 	Warnings    []moodleWarning         `json:"warnings"`
@@ -82,10 +95,15 @@ type assignmentSubmissions struct {
 }
 
 type submission struct {
-	Status string `json:"status"`
+	UserID        int64  `json:"userid"`
+	Status        string `json:"status"`
+	AttemptNumber int64  `json:"attemptnumber"`
+	Latest        int    `json:"latest"`
 }
 
 type moodleWarning struct {
+	Item        string `json:"item"`
+	ItemID      int64  `json:"itemid"`
 	WarningCode string `json:"warningcode"`
 	Message     string `json:"message"`
 }
@@ -145,7 +163,18 @@ func (client *moodleClient) getAssignments(ctx context.Context, token string, co
 	if err := client.postForm(ctx, "/webservice/rest/server.php", form, &response); err != nil {
 		return assignmentsResponse{}, err
 	}
+	client.sanitizeWarnings(response.Warnings, token)
 	return response, nil
+}
+
+func (client *moodleClient) getEnrolledUsers(ctx context.Context, token string, courseID int64) ([]enrolledUser, error) {
+	form := webServiceForm(token, "core_enrol_get_enrolled_users")
+	form.Set("courseid", fmt.Sprintf("%d", courseID))
+	var users []enrolledUser
+	if err := client.postForm(ctx, "/webservice/rest/server.php", form, &users); err != nil {
+		return nil, err
+	}
+	return users, nil
 }
 
 func (client *moodleClient) getSubmissions(ctx context.Context, token string, assignmentID int64) (submissionsResponse, error) {
@@ -155,7 +184,26 @@ func (client *moodleClient) getSubmissions(ctx context.Context, token string, as
 	if err := client.postForm(ctx, "/webservice/rest/server.php", form, &response); err != nil {
 		return submissionsResponse{}, err
 	}
+	client.sanitizeWarnings(response.Warnings, token)
 	return response, nil
+}
+
+func (client *moodleClient) sanitizeWarnings(warnings []moodleWarning, token string) {
+	for index := range warnings {
+		warnings[index].Item = redactSecrets(
+			cleanText(warnings[index].Item),
+			client.username,
+			client.password,
+			token,
+		)
+		warnings[index].WarningCode = cleanText(warnings[index].WarningCode)
+		warnings[index].Message = redactSecrets(
+			cleanText(warnings[index].Message),
+			client.username,
+			client.password,
+			token,
+		)
+	}
 }
 
 func webServiceForm(token, function string) url.Values {
