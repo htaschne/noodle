@@ -55,13 +55,6 @@ After completing Prerequisites Part 2, start the local broker:
 docker compose up -d rabbitmq
 ```
 
-Check its container and broker health:
-
-```sh
-docker compose ps
-docker compose exec rabbitmq rabbitmq-diagnostics -q ping
-```
-
 The management interface is available at [http://localhost:15672](http://localhost:15672). AMQP is exposed at `localhost:5672`. Both ports are bound only to the local machine.
 
 Independently running Go services connect to these endpoints:
@@ -70,18 +63,6 @@ Independently running Go services connect to these endpoints:
 - From another container on the Compose network: `amqp://rabbitmq:5672`
 
 These are host and port endpoints, not complete authenticated connection strings. Services must supply the configured credentials separately and must not embed passwords in source code or documentation.
-
-Stop RabbitMQ while preserving its named data volume:
-
-```sh
-docker compose down
-```
-
-To intentionally remove the persisted broker data as well:
-
-```sh
-docker compose down --volumes
-```
 
 ## API testing with Bruno
 
