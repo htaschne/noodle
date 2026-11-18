@@ -25,6 +25,7 @@ type reminderMessage struct {
 	StudentID      int64     `json:"student_id"`
 	Email          string    `json:"email"`
 	AssignmentName string    `json:"assignment_name"`
+	AssignmentURL  string    `json:"assignment_url"`
 	DueAt          time.Time `json:"due_at"`
 }
 
@@ -33,7 +34,7 @@ type rabbitMQPublisher struct {
 	channel    *amqp.Channel
 }
 
-func newReminderMessage(courseID, assignmentID, studentID int64, email, assignmentName string, dueAt time.Time) reminderMessage {
+func newReminderMessage(courseID, assignmentID, studentID int64, email, assignmentName, assignmentURL string, dueAt time.Time) reminderMessage {
 	return reminderMessage{
 		ID:             reminderMessageID(courseID, assignmentID, studentID),
 		CourseID:       courseID,
@@ -41,6 +42,7 @@ func newReminderMessage(courseID, assignmentID, studentID int64, email, assignme
 		StudentID:      studentID,
 		Email:          email,
 		AssignmentName: assignmentName,
+		AssignmentURL:  assignmentURL,
 		DueAt:          dueAt.UTC(),
 	}
 }

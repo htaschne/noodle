@@ -64,12 +64,13 @@ func TestValidCandidatesArePublished(t *testing.T) {
 	publisher := &recordingReminderPublisher{}
 	factory := &recordingPublisherFactory{publisher: publisher}
 	candidates := []reminderCandidate{{
-		CourseID:     95406,
-		AssignmentID: 123456,
-		UserID:       42,
-		Email:        "student@example.test",
-		Assignment:   "Trabalho 2",
-		DueDate:      time.Date(2026, time.October, 31, 15, 0, 0, 0, time.UTC),
+		CourseID:      95406,
+		AssignmentID:  123456,
+		UserID:        42,
+		Email:         "student@example.test",
+		Assignment:    "Trabalho 2",
+		AssignmentURL: "https://moodle.example.test/mod/assign/view.php?id=654321",
+		DueDate:       time.Date(2026, time.October, 31, 15, 0, 0, 0, time.UTC),
 	}}
 
 	published, err := publishReminderCandidates(context.Background(), factory.New, candidates, discardLogger())
@@ -93,12 +94,12 @@ func TestAmbiguousIdentificationProducesNoConnection(t *testing.T) {
 		Email: "student@example.test",
 		Roles: []moodleRole{{ShortName: "student"}, {ShortName: "custom-role"}},
 	}
-	assignment := assignment{ID: 2, DueDate: time.Now().Add(time.Hour).Unix()}
+	assignment := assignment{CMID: 201, ID: 2, DueDate: time.Now().Add(time.Hour).Unix()}
 	response := submissionsResponse{Assignments: []assignmentSubmissions{{
 		AssignmentID: assignment.ID,
 		Submissions:  []submission{{UserID: user.ID, Status: "draft", Latest: 1}},
 	}}}
-	identification := identifyReminderCandidates(1, assignment, []enrolledUser{user}, response)
+	identification := identifyReminderCandidates(1, assignment, []enrolledUser{user}, response, "https://moodle.example.test")
 	factory := &recordingPublisherFactory{publisher: &recordingReminderPublisher{}}
 
 	published, err := publishReminderCandidates(context.Background(), factory.New, identification.Candidates, discardLogger())

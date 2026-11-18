@@ -46,7 +46,7 @@ func TestRabbitMQConnectionErrorsAreRedacted(t *testing.T) {
 
 func TestReminderMessageSerialization(t *testing.T) {
 	dueAt := time.Date(2026, time.October, 31, 12, 0, 0, 0, time.FixedZone("BRT", -3*60*60))
-	message := newReminderMessage(95406, 123456, 42, "student@example.test", "Trabalho 2", dueAt)
+	message := newReminderMessage(95406, 123456, 42, "student@example.test", "Trabalho 2", "https://moodle.example.test/mod/assign/view.php?id=654321", dueAt)
 
 	body, err := marshalReminderMessage(message)
 	if err != nil {
@@ -57,8 +57,8 @@ func TestReminderMessageSerialization(t *testing.T) {
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		t.Fatalf("decode reminder JSON: %v", err)
 	}
-	if len(decoded) != 7 {
-		t.Fatalf("JSON field count = %d, want 7: %s", len(decoded), body)
+	if len(decoded) != 8 {
+		t.Fatalf("JSON field count = %d, want 8: %s", len(decoded), body)
 	}
 
 	expected := map[string]any{
@@ -68,6 +68,7 @@ func TestReminderMessageSerialization(t *testing.T) {
 		"student_id":      float64(42),
 		"email":           "student@example.test",
 		"assignment_name": "Trabalho 2",
+		"assignment_url":  "https://moodle.example.test/mod/assign/view.php?id=654321",
 		"due_at":          "2026-10-31T15:00:00Z",
 	}
 	for field, want := range expected {

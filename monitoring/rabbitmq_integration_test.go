@@ -38,6 +38,7 @@ func TestRabbitMQPublisherIntegration(t *testing.T) {
 		42,
 		"student@example.test",
 		"Trabalho 2",
+		"https://moodle.example.test/mod/assign/view.php?id=654321",
 		time.Date(2026, time.October, 31, 15, 0, 0, 0, time.UTC),
 	)
 	if err := publisher.Publish(ctx, message); err != nil {

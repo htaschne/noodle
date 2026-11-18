@@ -298,7 +298,7 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 			}
 
 			summary.recordWarnings(logger, operationSubmissions, course.ID, assignment.ID, submissionResponse.Warnings)
-			identification := identifyReminderCandidates(course.ID, assignment, enrolledUsers, submissionResponse)
+			identification := identifyReminderCandidates(course.ID, assignment, enrolledUsers, submissionResponse, client.baseURL)
 			if !identification.SubmissionDataOK {
 				summary.partialCoverage = true
 				logger.Warn(
@@ -546,6 +546,7 @@ func publishReminderCandidates(
 			candidate.UserID,
 			candidate.Email,
 			candidate.Assignment,
+			candidate.AssignmentURL,
 			candidate.DueDate,
 		)
 		if err := publisher.Publish(ctx, message); err != nil {

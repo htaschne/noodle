@@ -23,9 +23,10 @@ class ReminderEmailService {
         email.setText("""
                 Assignment: %s
                 Due: %s
+                Link: %s
 
                 Please submit this assignment through Moodle before the deadline.
-                """.formatted(reminder.assignmentName(), reminder.dueAt()));
+                """.formatted(reminder.assignmentName(), reminder.dueAt(), reminder.assignmentUrl()));
         mailSender.send(email);
     }
 }

@@ -11,6 +11,7 @@ public record ReminderMessage(
         @JsonProperty("student_id") long studentId,
         @JsonProperty("email") String email,
         @JsonProperty("assignment_name") String assignmentName,
+        @JsonProperty("assignment_url") String assignmentUrl,
         @JsonProperty("due_at") Instant dueAt
 ) {
 }

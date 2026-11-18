@@ -14,6 +14,7 @@ final class TestFixtures {
                 42,
                 "student@example.test",
                 "Trabalho 2",
+                "https://moodle.example.test/mod/assign/view.php?id=654321",
                 Instant.parse("2026-10-31T15:00:00Z")
         );
     }

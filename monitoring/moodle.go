@@ -64,6 +64,7 @@ type assignmentCourse struct {
 
 type assignment struct {
 	ID             int64  `json:"id"`
+	CMID           int64  `json:"cmid"`
 	Course         int64  `json:"course"`
 	Name           string `json:"name"`
 	DueDate        int64  `json:"duedate"`

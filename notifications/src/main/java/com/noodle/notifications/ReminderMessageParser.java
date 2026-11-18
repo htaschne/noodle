@@ -5,6 +5,8 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.charset.StandardCharsets;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.regex.Pattern;
 
 @Component
@@ -40,6 +42,15 @@ final class ReminderMessageParser {
         }
         if (message.assignmentName() == null || message.assignmentName().isBlank()) {
             throw new InvalidReminderMessageException("assignment name is required");
+        }
+        try {
+            URI url = new URI(message.assignmentUrl() == null ? "" : message.assignmentUrl());
+            if (!("https".equalsIgnoreCase(url.getScheme()) || "http".equalsIgnoreCase(url.getScheme()))
+                    || url.getHost() == null || url.getUserInfo() != null) {
+                throw new InvalidReminderMessageException("assignment URL must be an HTTP or HTTPS URL without credentials");
+            }
+        } catch (URISyntaxException exception) {
+            throw new InvalidReminderMessageException("assignment URL is invalid", exception);
         }
         if (message.dueAt() == null) {
             throw new InvalidReminderMessageException("due date is required");

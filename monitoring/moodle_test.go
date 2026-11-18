@@ -74,7 +74,7 @@ func TestMoodleAPIErrorIsDetectedAndRedacted(t *testing.T) {
 func TestAssignmentAndSubmissionResponsesDecode(t *testing.T) {
 	assignmentJSON := []byte(`{
 		"courses":[{"id":94476,"fullname":"Example Course","assignments":[{
-			"id":215841,"course":94476,"name":"Example Assignment","duedate":1793242740,
+			"id":215841,"cmid":654321,"course":94476,"name":"Example Assignment","duedate":1793242740,
 			"teamsubmission":1,"nosubmissions":0
 		}]}],
 		"warnings":[{"warningcode":"sample-warning","message":"Sample warning"}]
@@ -87,7 +87,7 @@ func TestAssignmentAndSubmissionResponsesDecode(t *testing.T) {
 		t.Fatalf("unexpected assignment response: %#v", assignments)
 	}
 	assignment := assignments.Courses[0].Assignments[0]
-	if assignment.ID != 215841 || assignment.DueDate != 1793242740 || assignment.TeamSubmission != 1 || assignment.NoSubmissions != 0 {
+	if assignment.ID != 215841 || assignment.CMID != 654321 || assignment.DueDate != 1793242740 || assignment.TeamSubmission != 1 || assignment.NoSubmissions != 0 {
 		t.Fatalf("unexpected assignment: %#v", assignment)
 	}
 
@@ -201,10 +201,10 @@ func TestUnavailableDataCannotReportCompleteCoverage(t *testing.T) {
 	}
 
 	student := enrolledUser{ID: 1, Email: "student@example.test", Roles: []moodleRole{{ShortName: "student"}}}
-	candidate := assignment{ID: 200, DueDate: time.Now().Add(time.Hour).Unix()}
+	candidate := assignment{CMID: 201, ID: 200, DueDate: time.Now().Add(time.Hour).Unix()}
 	identification := identifyReminderCandidates(100, candidate, []enrolledUser{student}, submissionsResponse{
 		Assignments: []assignmentSubmissions{{AssignmentID: candidate.ID}},
-	})
+	}, "https://moodle.example.test")
 	if identification.UnclassifiedStudents == 0 {
 		t.Fatal("missing student submission data should be unclassified")
 	}
@@ -273,7 +273,7 @@ func TestAssignmentEligibility(t *testing.T) {
 
 func TestIdentifyReminderCandidatesUsesExplicitLatestSubmissionStates(t *testing.T) {
 	due := time.Date(2026, time.October, 31, 10, 0, 0, 0, time.UTC)
-	candidate := assignment{ID: 200, Name: "Essay", DueDate: due.Unix()}
+	candidate := assignment{CMID: 201, ID: 200, Name: "Essay", DueDate: due.Unix()}
 	studentRole := []moodleRole{{ID: 5, ShortName: "student", Name: "Student"}}
 	users := []enrolledUser{
 		{ID: 1, Email: "submitted@example.test", Roles: studentRole},
@@ -295,7 +295,7 @@ func TestIdentifyReminderCandidatesUsesExplicitLatestSubmissionStates(t *testing
 		},
 	}}}
 
-	result := identifyReminderCandidates(100, candidate, users, response)
+	result := identifyReminderCandidates(100, candidate, users, response, "https://moodle.example.test")
 	if !result.SubmissionDataOK {
 		t.Fatalf("expected available submission data, got reason %q", result.UnavailableReason)
 	}
@@ -314,11 +314,23 @@ func TestIdentifyReminderCandidatesUsesExplicitLatestSubmissionStates(t *testing
 	if result.Candidates[0].DueDate != due || result.Candidates[0].CourseID != 100 || result.Candidates[0].AssignmentID != 200 {
 		t.Fatalf("candidate metadata was not preserved: %#v", result.Candidates[0])
 	}
+	if result.Candidates[0].AssignmentURL != "https://moodle.example.test/mod/assign/view.php?id=201" {
+		t.Fatalf("assignment link must use cmid, not assignment ID: %q", result.Candidates[0].AssignmentURL)
+	}
+}
+
+func TestMissingCourseModuleIDDoesNotProduceBrokenLink(t *testing.T) {
+	candidate := assignment{ID: 200}
+	response := submissionsResponse{Assignments: []assignmentSubmissions{{AssignmentID: 200}}}
+	result := identifyReminderCandidates(100, candidate, nil, response, "https://moodle.example.test")
+	if result.SubmissionDataOK || len(result.Candidates) != 0 || result.UnavailableReason == "" {
+		t.Fatalf("missing cmid must prevent publication: %#v", result)
+	}
 }
 
 func TestIdentifyReminderCandidatesFailsClosedForWarnings(t *testing.T) {
 	student := enrolledUser{ID: 1, Email: "student@example.test", Roles: []moodleRole{{ShortName: "student"}}}
-	candidate := assignment{ID: 200, DueDate: time.Now().Add(time.Hour).Unix()}
+	candidate := assignment{CMID: 201, ID: 200, DueDate: time.Now().Add(time.Hour).Unix()}
 
 	tests := []struct {
 		name    string
@@ -343,7 +355,7 @@ func TestIdentifyReminderCandidatesFailsClosedForWarnings(t *testing.T) {
 				}},
 				Warnings: []moodleWarning{test.warning},
 			}
-			result := identifyReminderCandidates(100, candidate, []enrolledUser{student}, response)
+			result := identifyReminderCandidates(100, candidate, []enrolledUser{student}, response, "https://moodle.example.test")
 			if result.SubmissionDataOK || len(result.Candidates) != 0 {
 				t.Fatalf("warning must make submission data unavailable: %#v", result)
 			}
@@ -353,16 +365,16 @@ func TestIdentifyReminderCandidatesFailsClosedForWarnings(t *testing.T) {
 
 func TestIdentifyReminderCandidatesDistinguishesEmptyAndMissingResults(t *testing.T) {
 	student := enrolledUser{ID: 1, Email: "student@example.test", Roles: []moodleRole{{ShortName: "student"}}}
-	candidate := assignment{ID: 200, DueDate: time.Now().Add(time.Hour).Unix()}
+	candidate := assignment{CMID: 201, ID: 200, DueDate: time.Now().Add(time.Hour).Unix()}
 
 	empty := identifyReminderCandidates(100, candidate, []enrolledUser{student}, submissionsResponse{
 		Assignments: []assignmentSubmissions{{AssignmentID: candidate.ID, Submissions: []submission{}}},
-	})
+	}, "https://moodle.example.test")
 	if !empty.SubmissionDataOK || empty.SubmissionCount != 0 || len(empty.Candidates) != 0 {
 		t.Fatalf("an explicit empty list should be available but produce no candidates: %#v", empty)
 	}
 
-	missing := identifyReminderCandidates(100, candidate, []enrolledUser{student}, submissionsResponse{})
+	missing := identifyReminderCandidates(100, candidate, []enrolledUser{student}, submissionsResponse{}, "https://moodle.example.test")
 	if missing.SubmissionDataOK || len(missing.Candidates) != 0 {
 		t.Fatalf("a missing assignment result must be unavailable: %#v", missing)
 	}
@@ -370,7 +382,7 @@ func TestIdentifyReminderCandidatesDistinguishesEmptyAndMissingResults(t *testin
 
 func TestConflictingRecordsForSameAttemptAreAmbiguous(t *testing.T) {
 	student := enrolledUser{ID: 1, Email: "student@example.test", Roles: []moodleRole{{ShortName: "student"}}}
-	candidate := assignment{ID: 200, DueDate: time.Now().Add(time.Hour).Unix()}
+	candidate := assignment{CMID: 201, ID: 200, DueDate: time.Now().Add(time.Hour).Unix()}
 	response := submissionsResponse{Assignments: []assignmentSubmissions{{
 		AssignmentID: candidate.ID,
 		Submissions: []submission{
@@ -379,7 +391,7 @@ func TestConflictingRecordsForSameAttemptAreAmbiguous(t *testing.T) {
 		},
 	}}}
 
-	result := identifyReminderCandidates(100, candidate, []enrolledUser{student}, response)
+	result := identifyReminderCandidates(100, candidate, []enrolledUser{student}, response, "https://moodle.example.test")
 	if len(result.Candidates) != 0 || result.CompletedStudents != 0 || result.IncompleteStudents != 0 {
 		t.Fatalf("a same-attempt status conflict should remain unclassified: %#v", result)
 	}
@@ -391,13 +403,13 @@ func TestMixedStudentAndStaffRolesAreExcluded(t *testing.T) {
 		Email: "mixed-role@example.test",
 		Roles: []moodleRole{{ShortName: "student"}, {ShortName: "editingteacher"}},
 	}
-	candidate := assignment{ID: 200, DueDate: time.Now().Add(time.Hour).Unix()}
+	candidate := assignment{CMID: 201, ID: 200, DueDate: time.Now().Add(time.Hour).Unix()}
 	response := submissionsResponse{Assignments: []assignmentSubmissions{{
 		AssignmentID: candidate.ID,
 		Submissions:  []submission{{UserID: user.ID, Status: "draft", Latest: 1}},
 	}}}
 
-	result := identifyReminderCandidates(100, candidate, []enrolledUser{user}, response)
+	result := identifyReminderCandidates(100, candidate, []enrolledUser{user}, response, "https://moodle.example.test")
 	if classifyEnrolmentRole(user.Roles) != roleNonStudent || len(result.Candidates) != 0 {
 		t.Fatalf("mixed student and staff roles must not produce candidates: %#v", result)
 	}
@@ -409,13 +421,13 @@ func TestMixedStudentAndUnknownRolesAreAmbiguous(t *testing.T) {
 		Email: "mixed-role@example.test",
 		Roles: []moodleRole{{ShortName: "student"}, {ShortName: "custom-role"}},
 	}
-	candidate := assignment{ID: 200, DueDate: time.Now().Add(time.Hour).Unix()}
+	candidate := assignment{CMID: 201, ID: 200, DueDate: time.Now().Add(time.Hour).Unix()}
 	response := submissionsResponse{Assignments: []assignmentSubmissions{{
 		AssignmentID: candidate.ID,
 		Submissions:  []submission{{UserID: user.ID, Status: "draft", Latest: 1}},
 	}}}
 
-	result := identifyReminderCandidates(100, candidate, []enrolledUser{user}, response)
+	result := identifyReminderCandidates(100, candidate, []enrolledUser{user}, response, "https://moodle.example.test")
 	if classifyEnrolmentRole(user.Roles) != roleAmbiguous || len(result.Candidates) != 0 {
 		t.Fatalf("mixed student and unknown roles must remain ambiguous: %#v", result)
 	}

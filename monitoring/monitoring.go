@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -16,12 +17,13 @@ const (
 )
 
 type reminderCandidate struct {
-	CourseID     int64
-	AssignmentID int64
-	UserID       int64
-	Email        string
-	Assignment   string
-	DueDate      time.Time
+	CourseID      int64
+	AssignmentID  int64
+	UserID        int64
+	Email         string
+	Assignment    string
+	AssignmentURL string
+	DueDate       time.Time
 }
 
 type candidateIdentification struct {
@@ -51,8 +53,12 @@ func isAssignmentEligible(candidate assignment, now time.Time) bool {
 	return deadline.After(now) && !deadline.After(now.Add(assignmentEligibilityWindow))
 }
 
-func identifyReminderCandidates(courseID int64, candidate assignment, users []enrolledUser, response submissionsResponse) candidateIdentification {
+func identifyReminderCandidates(courseID int64, candidate assignment, users []enrolledUser, response submissionsResponse, moodleURL string) candidateIdentification {
 	result := candidateIdentification{}
+	if candidate.CMID <= 0 {
+		result.UnavailableReason = "assignment course module ID missing"
+		return result
+	}
 	if len(response.Warnings) > 0 {
 		result.UnavailableReason = "Moodle returned submission warnings"
 		return result
@@ -106,12 +112,13 @@ func identifyReminderCandidates(courseID int64, candidate assignment, users []en
 		}
 
 		result.Candidates = append(result.Candidates, reminderCandidate{
-			CourseID:     courseID,
-			AssignmentID: candidate.ID,
-			UserID:       user.ID,
-			Email:        email,
-			Assignment:   candidate.Name,
-			DueDate:      deadline,
+			CourseID:      courseID,
+			AssignmentID:  candidate.ID,
+			UserID:        user.ID,
+			Email:         email,
+			Assignment:    candidate.Name,
+			AssignmentURL: fmt.Sprintf("%s/mod/assign/view.php?id=%d", strings.TrimRight(moodleURL, "/"), candidate.CMID),
+			DueDate:       deadline,
 		})
 	}
 
