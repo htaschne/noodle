@@ -35,3 +35,14 @@ authenticated account but returns `nopermission` for another student. The roster
 contained 177 students, with email exposed for only one. The current account cannot
 support class-wide reminders. Repeat with an account allowed to read other
 students' submissions and email addresses before considering delivery validated.
+
+## Expanded read-only scan: 2026-11-18
+
+Checked all 20 courses: 16 exposed assignments, totaling 45 visible tasks. All
+45 bulk submission queries returned access warnings; none were accessible.
+There were no request failures. Expanding the future deadline window from 24h to
+14 days found three eligible individual tasks across two courses, versus one
+task within 24h. All three remained blocked for class-wide submission queries.
+Both rosters exposed only the authenticated student's email. Individual status
+queries for that account succeeded for all three tasks (one `new`, two without
+attempts). The scan published no reminders; the application's window remains 24h.
