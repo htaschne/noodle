@@ -297,6 +297,10 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 				continue
 			}
 
+			submissionResponse, err = confirmMissingSubmissions(ctx, client, token, assignment.ID, enrolledUsers, submissionResponse, logger)
+			if err != nil {
+				return err
+			}
 			summary.recordWarnings(logger, operationSubmissions, course.ID, assignment.ID, submissionResponse.Warnings)
 			identification := identifyReminderCandidates(course.ID, assignment, enrolledUsers, submissionResponse, client.baseURL)
 			if !identification.SubmissionDataOK {

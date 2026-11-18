@@ -90,6 +90,19 @@ type submissionsResponse struct {
 	Warnings    []moodleWarning         `json:"warnings"`
 }
 
+type submissionStatusResponse struct {
+	LastAttempt *submissionAttempt `json:"lastattempt"`
+	Warnings    []moodleWarning    `json:"warnings"`
+}
+
+type submissionAttempt struct {
+	Submission         *submission `json:"submission"`
+	SubmissionsEnabled bool        `json:"submissionsenabled"`
+	CanEditOwner       bool        `json:"caneditowner"`
+	Locked             bool        `json:"locked"`
+	ExtensionDueDate   int64       `json:"extensionduedate"`
+}
+
 type assignmentSubmissions struct {
 	AssignmentID int64        `json:"assignmentid"`
 	Submissions  []submission `json:"submissions"`
@@ -184,6 +197,18 @@ func (client *moodleClient) getSubmissions(ctx context.Context, token string, as
 	var response submissionsResponse
 	if err := client.postForm(ctx, "/webservice/rest/server.php", form, &response); err != nil {
 		return submissionsResponse{}, err
+	}
+	client.sanitizeWarnings(response.Warnings, token)
+	return response, nil
+}
+
+func (client *moodleClient) getSubmissionStatus(ctx context.Context, token string, assignmentID, userID int64) (submissionStatusResponse, error) {
+	form := webServiceForm(token, "mod_assign_get_submission_status")
+	form.Set("assignid", fmt.Sprintf("%d", assignmentID))
+	form.Set("userid", fmt.Sprintf("%d", userID))
+	var response submissionStatusResponse
+	if err := client.postForm(ctx, "/webservice/rest/server.php", form, &response); err != nil {
+		return submissionStatusResponse{}, err
 	}
 	client.sanitizeWarnings(response.Warnings, token)
 	return response, nil
