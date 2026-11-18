@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 )
@@ -134,64 +132,6 @@ func findAssignmentSubmissions(assignmentID int64, assignments []assignmentSubmi
 		}
 	}
 	return assignmentSubmissions{}, false
-}
-
-// The bulk endpoint can omit students without attempts or with restricted access.
-// Confirm each missing student's status before treating them as pending.
-func confirmMissingSubmissions(ctx context.Context, client *moodleClient, token string, assignmentID int64, users []enrolledUser, response submissionsResponse, logger *slog.Logger) (submissionsResponse, error) {
-	assignmentResult, found := findAssignmentSubmissions(assignmentID, response.Assignments)
-	if !found {
-		return response, nil
-	}
-	warnings := make([]moodleWarning, 0, len(response.Warnings))
-	for _, warning := range response.Warnings {
-		// Moodle reports an empty assignment with code 3, not a permission error.
-		if warning.Item == "module" && warning.ItemID == assignmentID && warning.WarningCode == "3" && len(assignmentResult.Submissions) == 0 {
-			continue
-		}
-		warnings = append(warnings, warning)
-	}
-	response.Warnings = warnings
-	if len(warnings) > 0 {
-		return response, nil
-	}
-
-	known := latestSubmissionsByUser(assignmentResult.Submissions)
-	for _, user := range users {
-		if !hasStudentRole(user.Roles) || strings.TrimSpace(user.Email) == "" {
-			continue
-		}
-		if _, exists := known[user.ID]; exists {
-			continue
-		}
-		status, err := client.getSubmissionStatus(ctx, token, assignmentID, user.ID)
-		if ctx.Err() != nil {
-			return response, ctx.Err()
-		}
-		if err != nil || len(status.Warnings) > 0 {
-			logger.Warn("could not confirm student submission status", "assignment_id", assignmentID, "student_id", user.ID, "error", err, "warnings", len(status.Warnings))
-			continue
-		}
-		attempt := status.LastAttempt
-		if attempt == nil || !attempt.SubmissionsEnabled || !attempt.CanEditOwner || attempt.Locked || attempt.ExtensionDueDate > 0 {
-			continue
-		}
-		confirmed := submission{UserID: user.ID, Status: "new", Latest: 1}
-		if attempt.Submission != nil {
-			if attempt.Submission.UserID != user.ID {
-				continue
-			}
-			confirmed = *attempt.Submission
-		}
-		assignmentResult.Submissions = append(assignmentResult.Submissions, confirmed)
-	}
-	for index := range response.Assignments {
-		if response.Assignments[index].AssignmentID == assignmentID {
-			response.Assignments[index] = assignmentResult
-			break
-		}
-	}
-	return response, nil
 }
 
 func latestSubmissionsByUser(submissions []submission) map[int64]resolvedSubmission {
