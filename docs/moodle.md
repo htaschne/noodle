@@ -37,9 +37,11 @@ MOODLE_SERVICE=external-service-shortname
 MONITOR_INTERVAL=10s
 ```
 
-`MOODLE_SERVICE` defaults to `moodle_mobile_app`. The worker obtains a fresh token
-each cycle; it does not read `MOODLE_TOKEN`. Keep credentials out of Git and restore
-`MONITOR_INTERVAL=1h` after the demonstration. Start the stack using the root guide.
+`MOODLE_SERVICE` defaults to `moodle_mobile_app` in the worker. Bruno requires it
+explicitly in `.env`; `bruno/.env` links to the root file. The worker obtains a fresh
+token each cycle; it does not read `MOODLE_TOKEN`. Keep credentials out of Git and
+restore `MONITOR_INTERVAL=1h` after the demonstration. Start the stack using the
+root guide.
 
 ## Students without attempts
 
