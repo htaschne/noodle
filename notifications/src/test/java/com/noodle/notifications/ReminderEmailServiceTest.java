@@ -18,7 +18,10 @@ class ReminderEmailServiceTest {
         JavaMailSender mailSender = mock(JavaMailSender.class);
         ReminderEmailService service = new ReminderEmailService(mailSender, "noodle@example.test");
 
-        service.send(TestFixtures.reminder());
+        service.send(new ReminderMessage("95406:123456:42", 95406, 123456, 42,
+                "student@example.test", "Trabalho 2",
+                "https://moodle.example.test/mod/assign/view.php?id=654321",
+                Instant.parse("2026-10-31T15:00:00Z")));
 
         ArgumentCaptor<SimpleMailMessage> captor = ArgumentCaptor.forClass(SimpleMailMessage.class);
         verify(mailSender).send(captor.capture());

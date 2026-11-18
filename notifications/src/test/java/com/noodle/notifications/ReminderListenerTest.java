@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 
+import java.time.Instant;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -20,7 +22,10 @@ class ReminderListenerTest {
         ReminderMessageParser parser = mock(ReminderMessageParser.class);
         ReminderProcessor processor = mock(ReminderProcessor.class);
         Channel channel = mock(Channel.class);
-        ReminderMessage reminder = TestFixtures.reminder();
+        ReminderMessage reminder = new ReminderMessage("95406:123456:42", 95406, 123456, 42,
+                "student@example.test", "Trabalho 2",
+                "https://moodle.example.test/mod/assign/view.php?id=654321",
+                Instant.parse("2026-10-31T15:00:00Z"));
         when(parser.parse(any())).thenReturn(reminder);
 
         new ReminderListener(parser, processor).receive(message(), channel);
@@ -35,7 +40,10 @@ class ReminderListenerTest {
         ReminderMessageParser parser = mock(ReminderMessageParser.class);
         ReminderProcessor processor = mock(ReminderProcessor.class);
         Channel channel = mock(Channel.class);
-        ReminderMessage reminder = TestFixtures.reminder();
+        ReminderMessage reminder = new ReminderMessage("95406:123456:42", 95406, 123456, 42,
+                "student@example.test", "Trabalho 2",
+                "https://moodle.example.test/mod/assign/view.php?id=654321",
+                Instant.parse("2026-10-31T15:00:00Z"));
         when(parser.parse(any())).thenReturn(reminder);
         when(processor.process(reminder)).thenReturn(ReminderProcessor.Result.DUPLICATE);
 
@@ -64,7 +72,10 @@ class ReminderListenerTest {
         ReminderMessageParser parser = mock(ReminderMessageParser.class);
         ReminderProcessor processor = mock(ReminderProcessor.class);
         Channel channel = mock(Channel.class);
-        ReminderMessage reminder = TestFixtures.reminder();
+        ReminderMessage reminder = new ReminderMessage("95406:123456:42", 95406, 123456, 42,
+                "student@example.test", "Trabalho 2",
+                "https://moodle.example.test/mod/assign/view.php?id=654321",
+                Instant.parse("2026-10-31T15:00:00Z"));
         when(parser.parse(any())).thenReturn(reminder);
         doThrow(new NotificationProcessingException("delivery failed")).when(processor).process(reminder);
 

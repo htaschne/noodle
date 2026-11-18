@@ -5,6 +5,8 @@ import org.springframework.mail.MailSendException;
 
 import java.time.Duration;
 
+import java.time.Instant;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.doThrow;
@@ -19,7 +21,10 @@ class ReminderProcessorTest {
     void deliversAndRecordsReminder() {
         NotificationHistoryRepository history = mock(NotificationHistoryRepository.class);
         ReminderEmailService emailService = mock(ReminderEmailService.class);
-        ReminderMessage reminder = TestFixtures.reminder();
+        ReminderMessage reminder = new ReminderMessage("95406:123456:42", 95406, 123456, 42,
+                "student@example.test", "Trabalho 2",
+                "https://moodle.example.test/mod/assign/view.php?id=654321",
+                Instant.parse("2026-10-31T15:00:00Z"));
         when(history.recordDelivered(reminder.id())).thenReturn(true);
         ReminderProcessor processor = new ReminderProcessor(history, emailService, 3, Duration.ZERO);
 
@@ -33,7 +38,10 @@ class ReminderProcessorTest {
     void suppressesAlreadyDeliveredReminder() {
         NotificationHistoryRepository history = mock(NotificationHistoryRepository.class);
         ReminderEmailService emailService = mock(ReminderEmailService.class);
-        ReminderMessage reminder = TestFixtures.reminder();
+        ReminderMessage reminder = new ReminderMessage("95406:123456:42", 95406, 123456, 42,
+                "student@example.test", "Trabalho 2",
+                "https://moodle.example.test/mod/assign/view.php?id=654321",
+                Instant.parse("2026-10-31T15:00:00Z"));
         when(history.wasDelivered(reminder.id())).thenReturn(true);
         ReminderProcessor processor = new ReminderProcessor(history, emailService, 3, Duration.ZERO);
 
@@ -47,7 +55,10 @@ class ReminderProcessorTest {
     void retriesSmtpFailureOnlyUpToConfiguredLimit() {
         NotificationHistoryRepository history = mock(NotificationHistoryRepository.class);
         ReminderEmailService emailService = mock(ReminderEmailService.class);
-        ReminderMessage reminder = TestFixtures.reminder();
+        ReminderMessage reminder = new ReminderMessage("95406:123456:42", 95406, 123456, 42,
+                "student@example.test", "Trabalho 2",
+                "https://moodle.example.test/mod/assign/view.php?id=654321",
+                Instant.parse("2026-10-31T15:00:00Z"));
         doThrow(new MailSendException("SMTP unavailable")).when(emailService).send(reminder);
         ReminderProcessor processor = new ReminderProcessor(history, emailService, 3, Duration.ZERO);
 

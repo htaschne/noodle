@@ -55,9 +55,8 @@ class ReminderMessageParserTest {
     @ValueSource(strings = {"javascript:alert(1)", "/mod/assign/view.php?id=1",
             "https://user:secret@moodle.example.test/task", "https://", "https://moodle.example.test/bad link"})
     void rejectsMissingOrInvalidAssignmentUrl(String url) throws Exception {
-        ReminderMessage valid = TestFixtures.reminder();
-        ReminderMessage invalid = new ReminderMessage(valid.id(), valid.courseId(), valid.assignmentId(),
-                valid.studentId(), valid.email(), valid.assignmentName(), url, valid.dueAt());
+        ReminderMessage invalid = new ReminderMessage("95406:123456:42", 95406, 123456, 42,
+                "student@example.test", "Trabalho 2", url, Instant.parse("2026-10-31T15:00:00Z"));
         byte[] payload = JsonMapper.builder().build().writeValueAsBytes(invalid);
 
         assertThrows(InvalidReminderMessageException.class, () -> parser.parse(payload));
