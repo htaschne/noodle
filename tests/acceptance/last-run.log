@@ -1,0 +1,10 @@
+Recorded at 2026-11-19T13:42:42.807819+00:00
+=== RUN   TestPersonalAcceptance
+    personal_acceptance_test.go:116: PASS criterion 1: never-started assignment due within 24h produced one Mailpit email containing name, deadline and link
+    personal_acceptance_test.go:123: PASS criterion 2: submitted, outside-window, overdue and group assignments produced no additional email
+    personal_acceptance_test.go:143: PASS criterion 3: replay after monitoring and notification restarts sent no duplicate email
+    personal_acceptance_test.go:165: PASS criterion 4: Mailpit SMTP 451 failure was logged; retry recovered and delivered the draft reminder
+    personal_acceptance_test.go:166: Acceptance result: 2 captured emails, fictional accounts only, no live Moodle requests
+--- PASS: TestPersonalAcceptance (5.31s)
+PASS
+ok  	github.com/htaschne/noodle/monitoring	5.777s

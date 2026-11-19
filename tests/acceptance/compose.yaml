@@ -1,0 +1,44 @@
+services:
+  rabbitmq:
+    image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: noodle_test
+      RABBITMQ_DEFAULT_PASS: noodle_test
+    ports:
+      - "127.0.0.1::5672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit:latest
+    environment:
+      MP_ENABLE_CHAOS: "true"
+      MP_SMTP_DISABLE_RDNS: "true"
+    ports:
+      - "127.0.0.1::8025"
+
+  notifications:
+    build:
+      context: ../../notifications
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: noodle_test
+      RABBITMQ_PASSWORD: noodle_test
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      NOTIFICATIONS_DB_PATH: /data/notifications.db
+      NOTIFICATIONS_DELIVERY_RETRY_DELAY: 2s
+    volumes:
+      - history:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+volumes:
+  history:

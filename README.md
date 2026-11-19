@@ -4,10 +4,19 @@ Noodle monitors Moodle assignments and sends email reminders for eligible pendin
 
 | Service | Responsibility | Technology |
 | --- | --- | --- |
-| Monitoring | Discovers courses, filters assignments, evaluates student submission state, and publishes reminder requests | Go 1.27 |
+| Monitoring | Reads calendar deadlines or evaluates assignments and submission state through the API, then publishes reminder requests | Go 1.27 |
 | Notifications | Consumes reminder requests, sends email, and records delivered message IDs | Java 25, Spring Boot 4.1.2, SQLite |
 
 RabbitMQ carries reminder messages. The local Docker Compose stack uses Mailpit as its SMTP server and email viewer. See [Architecture](docs/ARCHITECTURE.md) for the internal flow and reliability behavior.
+
+Each student authorizes their own Moodle account. In personal API mode, the worker reads that student's courses and assignments, checks their own latest submission status, and sends reminders only to their configured email. It does not read class rosters or classmates' submissions. One worker is configured per student; shared account registration and credential storage are outside the current implementation.
+
+> [!WARNING]
+> **Calendar-only limitation:** iCalendar exports contain deadlines but no submission status, so calendar-only reminders may include work already submitted. Use `MOODLE_SOURCE=api` for submission-aware reminders. Calendar mode also cannot verify team-assignment settings, and a changed calendar deadline can generate another reminder for the same event. See [monitoring behavior and limitations](monitoring/README.md).
+
+The four project acceptance scenarios are automated against fictional Moodle REST responses, real RabbitMQ and the Notifications service, and Mailpit. See [test results and reproduction steps](tests/acceptance/README.md). Read-only PUCRS checks also validated the personal API client; production permissions and hidden activities can still limit coverage.
+
+The [presentation and demonstration script](docs/PRESENTATION.md) covers the implementation, the four acceptance scenarios, and the documented limitations.
 
 ## Development
 
@@ -25,13 +34,23 @@ Create a local environment file:
 cp .env.example .env
 ```
 
-then add missing the empty fields with your credentials into `.env` you just created:
+For submission-aware personal reminders, configure your own Moodle account and email:
 
-``` sh
-MOODLE_USERNAME=
-MOODLE_PASSWORD=
-MOODLE_TOKEN=
+```dotenv
+MOODLE_SOURCE=api
+MOODLE_URL=https://moodle.pucrs.br
+MOODLE_USERNAME=<your Moodle username>
+MOODLE_PASSWORD=<your Moodle password>
+MOODLE_SERVICE=moodle_mobile_app
+NOTIFICATION_EMAIL=<your reminder email>
+MONITOR_INTERVAL=1h
 ```
+
+API mode uses `mod_assign_get_submission_status` for the authenticated student. No access to classmates' emails or submissions is needed. Existing `MOODLE_TOKEN` is retained for development tools; the worker currently authenticates using username and password.
+
+For calendar-only reminders, follow the export steps in `.env.example`, set `MOODLE_SOURCE=ical`, `MOODLE_ICAL_URL`, and `MOODLE_ICAL_EMAIL` (or `NOTIFICATION_EMAIL`). With `MOODLE_SOURCE=auto` or unset, a configured calendar URL takes precedence; otherwise the personal API is used. Explicit `api` mode preserves a saved calendar URL while selecting submission-aware monitoring. API failures do not silently switch to calendar-only reminders.
+
+The calendar URL contains a secret authentication token. Keep it and your Moodle credentials only in the ignored `.env` file. See [calendar configuration](monitoring/README.md#calendar-configuration).
 
 ### Run
 

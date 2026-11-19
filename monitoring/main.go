@@ -19,16 +19,21 @@ const (
 	defaultMonitorInterval = time.Hour
 	defaultHTTPTimeout     = 30 * time.Second
 	operationAssignments   = "get_assignments"
-	operationSubmissions   = "get_submissions"
+	operationSubmissions   = "get_submission_status"
 )
 
 type config struct {
-	moodleURL       string
-	moodleUsername  string
-	moodlePassword  string
-	moodleService   string
-	monitorInterval time.Duration
-	logLevel        slog.Level
+	moodleURL         string
+	moodleUsername    string
+	moodlePassword    string
+	moodleService     string
+	moodleSource      string
+	notificationEmail string
+	moodleICalURL     string
+	moodleICalEmail   string
+	calendarZone      *time.Location
+	monitorInterval   time.Duration
+	logLevel          slog.Level
 }
 
 type cycleSummary struct {
@@ -91,13 +96,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	client := newMoodleClient(
-		cfg.moodleURL,
-		cfg.moodleUsername,
-		cfg.moodlePassword,
-		cfg.moodleService,
-		&http.Client{Timeout: defaultHTTPTimeout},
-	)
+	client := newMonitoringSource(cfg, &http.Client{Timeout: defaultHTTPTimeout})
 	logger.Info(
 		"monitoring service started",
 		"interval", cfg.monitorInterval,
@@ -124,32 +123,72 @@ func newLogger(level slog.Level) *slog.Logger {
 
 func loadConfig() (config, error) {
 	cfg := config{
-		moodleURL:       strings.TrimRight(strings.TrimSpace(os.Getenv("MOODLE_URL")), "/"),
-		moodleUsername:  os.Getenv("MOODLE_USERNAME"),
-		moodlePassword:  os.Getenv("MOODLE_PASSWORD"),
-		moodleService:   os.Getenv("MOODLE_SERVICE"),
-		monitorInterval: defaultMonitorInterval,
-		logLevel:        slog.LevelInfo,
+		moodleURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("MOODLE_URL")), "/"),
+		moodleUsername:    os.Getenv("MOODLE_USERNAME"),
+		moodlePassword:    os.Getenv("MOODLE_PASSWORD"),
+		moodleService:     os.Getenv("MOODLE_SERVICE"),
+		moodleSource:      strings.ToLower(strings.TrimSpace(os.Getenv("MOODLE_SOURCE"))),
+		notificationEmail: strings.TrimSpace(os.Getenv("NOTIFICATION_EMAIL")),
+		moodleICalURL:     strings.TrimSpace(os.Getenv("MOODLE_ICAL_URL")),
+		moodleICalEmail:   strings.TrimSpace(os.Getenv("MOODLE_ICAL_EMAIL")),
+		calendarZone:      time.UTC,
+		monitorInterval:   defaultMonitorInterval,
+		logLevel:          slog.LevelInfo,
 	}
 
-	if cfg.moodleURL == "" {
-		return config{}, fmt.Errorf("MOODLE_URL is required")
+	if cfg.moodleSource == "" || cfg.moodleSource == "auto" {
+		cfg.moodleSource = "api"
+		if cfg.moodleICalURL != "" {
+			cfg.moodleSource = "ical"
+		}
 	}
-	parsedURL, err := url.Parse(cfg.moodleURL)
-	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
-		return config{}, fmt.Errorf("MOODLE_URL must be a valid HTTP or HTTPS URL")
+	if cfg.moodleSource != "api" && cfg.moodleSource != "ical" {
+		return config{}, fmt.Errorf("MOODLE_SOURCE must be auto, api, or ical")
 	}
-	if parsedURL.User != nil {
-		return config{}, fmt.Errorf("MOODLE_URL must not contain credentials")
+	if cfg.notificationEmail == "" {
+		cfg.notificationEmail = cfg.moodleICalEmail
 	}
-	if cfg.moodleUsername == "" {
-		return config{}, fmt.Errorf("MOODLE_USERNAME is required")
-	}
-	if cfg.moodlePassword == "" {
-		return config{}, fmt.Errorf("MOODLE_PASSWORD is required")
-	}
-	if cfg.moodleService == "" {
-		cfg.moodleService = "moodle_mobile_app"
+	if cfg.moodleSource == "ical" {
+		parsed, err := url.Parse(cfg.moodleICalURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+			return config{}, fmt.Errorf("MOODLE_ICAL_URL must be a valid HTTP or HTTPS URL without user credentials or fragment")
+		}
+		if cfg.moodleICalEmail == "" {
+			cfg.moodleICalEmail = cfg.notificationEmail
+		}
+		if !validCalendarEmail(cfg.moodleICalEmail) {
+			return config{}, fmt.Errorf("MOODLE_ICAL_EMAIL must be a recipient email address when MOODLE_ICAL_URL is configured")
+		}
+		zone := strings.TrimSpace(os.Getenv("MOODLE_ICAL_TIMEZONE"))
+		if zone != "" {
+			cfg.calendarZone, err = time.LoadLocation(zone)
+			if err != nil {
+				return config{}, fmt.Errorf("MOODLE_ICAL_TIMEZONE must be an IANA timezone")
+			}
+		}
+	} else {
+		if !validCalendarEmail(cfg.notificationEmail) {
+			return config{}, fmt.Errorf("NOTIFICATION_EMAIL must be a recipient email address in personal API mode")
+		}
+		if cfg.moodleURL == "" {
+			return config{}, fmt.Errorf("MOODLE_URL is required")
+		}
+		parsedURL, err := url.Parse(cfg.moodleURL)
+		if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+			return config{}, fmt.Errorf("MOODLE_URL must be a valid HTTP or HTTPS URL")
+		}
+		if parsedURL.User != nil {
+			return config{}, fmt.Errorf("MOODLE_URL must not contain credentials")
+		}
+		if cfg.moodleUsername == "" {
+			return config{}, fmt.Errorf("MOODLE_USERNAME is required")
+		}
+		if cfg.moodlePassword == "" {
+			return config{}, fmt.Errorf("MOODLE_PASSWORD is required")
+		}
+		if cfg.moodleService == "" {
+			cfg.moodleService = "moodle_mobile_app"
+		}
 	}
 
 	if rawInterval := strings.TrimSpace(os.Getenv("MONITOR_INTERVAL")); rawInterval != "" {
@@ -176,13 +215,30 @@ func loadConfig() (config, error) {
 	return cfg, nil
 }
 
-func run(ctx context.Context, client *moodleClient, interval time.Duration, logger *slog.Logger) {
+type monitoringSource interface {
+	monitor(context.Context, *slog.Logger) error
+}
+
+func newMonitoringSource(cfg config, httpClient *http.Client) monitoringSource {
+	if cfg.moodleSource == "ical" {
+		return &calendarClient{feedURL: cfg.moodleICalURL, email: cfg.moodleICalEmail, location: cfg.calendarZone, httpClient: httpClient, published: make(map[string]int64), newPublisher: newReminderPublisher}
+	}
+	client := newMoodleClient(cfg.moodleURL, cfg.moodleUsername, cfg.moodlePassword, cfg.moodleService, httpClient)
+	client.email = cfg.notificationEmail
+	return client
+}
+
+func (client *moodleClient) monitor(ctx context.Context, logger *slog.Logger) error {
+	return monitorCycle(ctx, client, logger)
+}
+
+func run(ctx context.Context, client monitoringSource, interval time.Duration, logger *slog.Logger) {
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 
-		if err := monitorCycle(ctx, client, logger); err != nil && ctx.Err() == nil {
+		if err := client.monitor(ctx, logger); err != nil && ctx.Err() == nil {
 			logger.Error("monitoring cycle failed", "error", err)
 		}
 
@@ -216,6 +272,7 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 		return fmt.Errorf("get courses: %w", err)
 	}
 	summary := newCycleSummary(len(courses))
+	summary.enrolledStudents = 1
 	cycleCandidates := make([]reminderCandidate, 0)
 	logger.Info("discovered courses", "count", summary.courses)
 
@@ -263,84 +320,32 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 			continue
 		}
 
-		enrolledUsers, err := client.getEnrolledUsers(ctx, token, course.ID)
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			summary.partialCoverage = true
-			logger.Error("could not retrieve enrolled users", "course_id", course.ID, "error", err)
-			continue
-		}
-		studentCount, ambiguousRoleCount := countEnrolmentRoles(enrolledUsers)
-		summary.enrolledStudents += studentCount
-		logger.Debug("enrolled students retrieved", "course_id", course.ID, "students", studentCount)
-		if ambiguousRoleCount > 0 {
-			summary.partialCoverage = true
-			logger.Warn(
-				"enrolment roles could not be classified",
-				"course_id", course.ID,
-				"ambiguous_users", ambiguousRoleCount,
-				"reason", "unrecognized or missing Moodle role shortnames",
-			)
-		}
-
-		for _, assignment := range eligibleAssignments {
-			submissionResponse, err := client.getSubmissions(ctx, token, assignment.ID)
+		for _, candidate := range eligibleAssignments {
+			status, err := client.getOwnSubmissionStatus(ctx, token, candidate.ID)
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
 				summary.partialCoverage = true
-				logSubmissionFailure(logger, course.ID, assignment.ID, err)
-				logger.Debug("assignment skipped", "course_id", course.ID, "assignment_id", assignment.ID, "reason", "submission data unavailable")
+				logSubmissionFailure(logger, course.ID, candidate.ID, err)
 				continue
 			}
-
-			summary.recordWarnings(logger, operationSubmissions, course.ID, assignment.ID, submissionResponse.Warnings)
-			identification := identifyReminderCandidates(course.ID, assignment, enrolledUsers, submissionResponse, client.baseURL)
+			summary.recordWarnings(logger, operationSubmissions, course.ID, candidate.ID, status.Warnings)
+			identification := identifyPersonalReminder(course.ID, candidate, siteInfo.UserID, client.email, status, client.baseURL)
 			if !identification.SubmissionDataOK {
 				summary.partialCoverage = true
-				logger.Warn(
-					"submission data unavailable",
-					"course_id", course.ID,
-					"assignment_id", assignment.ID,
-					"reason", identification.UnavailableReason,
-				)
-				logger.Debug("assignment skipped", "course_id", course.ID, "assignment_id", assignment.ID, "reason", "submission data unavailable")
+				logger.Warn("own submission status unavailable", "course_id", course.ID, "assignment_id", candidate.ID, "reason", identification.UnavailableReason)
 				continue
 			}
-			if identification.UnclassifiedStudents > 0 {
-				summary.partialCoverage = true
-				logger.Warn(
-					"student submission states could not be classified",
-					"course_id", course.ID,
-					"assignment_id", assignment.ID,
-					"unclassified_students", identification.UnclassifiedStudents,
-				)
-			}
-
 			summary.submissions += identification.SubmissionCount
 			summary.candidates += len(identification.Candidates)
 			cycleCandidates = append(cycleCandidates, identification.Candidates...)
-			_, statuses := summarizeSubmissions(submissionResponse)
-			logger.Debug(
-				"submissions retrieved",
-				"course_id", course.ID,
-				"assignment_id", assignment.ID,
-				"submissions", identification.SubmissionCount,
-				"statuses", statuses,
-			)
-			logger.Debug(
-				"reminder candidates identified",
-				"course_id", course.ID,
-				"assignment_id", assignment.ID,
-				"candidates", len(identification.Candidates),
-			)
+			logger.Debug("own submission checked", "course_id", course.ID, "assignment_id", candidate.ID,
+				"completed", identification.CompletedStudents, "pending", identification.IncompleteStudents)
 		}
 	}
 
-	published, err := publishReminderCandidates(ctx, newReminderPublisher, cycleCandidates, logger)
+	published, err := publishReminderCandidates(ctx, client.newPublisher, cycleCandidates, logger)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()

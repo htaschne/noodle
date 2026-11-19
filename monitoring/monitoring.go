@@ -53,6 +53,58 @@ func isAssignmentEligible(candidate assignment, now time.Time) bool {
 	return deadline.After(now) && !deadline.After(now.Add(assignmentEligibilityWindow))
 }
 
+// identifyPersonalReminder only trusts a successful, owner-specific latest
+// attempt. Unlike absence in a bulk list, an explicit editable lastattempt with
+// no submission confirms that the authenticated student has not started yet.
+func identifyPersonalReminder(courseID int64, candidate assignment, userID int64, email string, response submissionStatusResponse, moodleURL string) candidateIdentification {
+	result := candidateIdentification{}
+	if courseID <= 0 || candidate.ID <= 0 || candidate.CMID <= 0 || userID <= 0 || !validCalendarEmail(email) {
+		result.UnavailableReason = "invalid reminder metadata"
+		return result
+	}
+	if len(response.Warnings) != 0 || response.LastAttempt == nil {
+		result.UnavailableReason = "missing or incomplete own submission status"
+		return result
+	}
+	attempt := response.LastAttempt
+	if attempt.Submission != nil {
+		if attempt.Submission.UserID != userID {
+			result.UnavailableReason = "submission owner does not match authenticated student"
+			return result
+		}
+		result.SubmissionCount = 1
+		if normalizedSubmissionStatus(attempt.Submission.Status) == "submitted" {
+			result.SubmissionDataOK = true
+			result.CompletedStudents = 1
+			return result
+		}
+		switch normalizedSubmissionStatus(attempt.Submission.Status) {
+		case "new", "draft", "reopened":
+		default:
+			result.UnavailableReason = "unrecognized own submission status"
+			return result
+		}
+	}
+	if attempt.SubmissionsEnabled == nil || attempt.CanEditOwner == nil || attempt.Locked == nil || attempt.Graded == nil {
+		result.UnavailableReason = "incomplete own attempt permissions"
+		return result
+	}
+	result.SubmissionDataOK = true
+	// Moodle 4.5 returns null when no individual extension exists.
+	hasExtension := attempt.ExtensionDueDate != nil && *attempt.ExtensionDueDate > 0
+	if !*attempt.SubmissionsEnabled || !*attempt.CanEditOwner || *attempt.Locked || attempt.TeamSubmission != nil || hasExtension || (attempt.Submission == nil && *attempt.Graded) {
+		return result
+	}
+	result.IncompleteStudents = 1
+	result.Candidates = []reminderCandidate{{
+		CourseID: courseID, AssignmentID: candidate.ID, UserID: userID,
+		Email: email, Assignment: candidate.Name,
+		AssignmentURL: fmt.Sprintf("%s/mod/assign/view.php?id=%d", strings.TrimRight(moodleURL, "/"), candidate.CMID),
+		DueDate:       time.Unix(candidate.DueDate, 0).UTC(),
+	}}
+	return result
+}
+
 func identifyReminderCandidates(courseID int64, candidate assignment, users []enrolledUser, response submissionsResponse, moodleURL string) candidateIdentification {
 	result := candidateIdentification{}
 	if candidate.CMID <= 0 {

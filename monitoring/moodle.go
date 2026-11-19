@@ -13,11 +13,13 @@ import (
 const maxMoodleResponseSize = 10 << 20
 
 type moodleClient struct {
-	baseURL    string
-	username   string
-	password   string
-	service    string
-	httpClient *http.Client
+	baseURL      string
+	username     string
+	password     string
+	service      string
+	email        string
+	httpClient   *http.Client
+	newPublisher reminderPublisherFactory
 }
 
 type moodleAPIError struct {
@@ -90,6 +92,21 @@ type submissionsResponse struct {
 	Warnings    []moodleWarning         `json:"warnings"`
 }
 
+type submissionStatusResponse struct {
+	LastAttempt *submissionAttempt `json:"lastattempt"`
+	Warnings    []moodleWarning    `json:"warnings"`
+}
+
+type submissionAttempt struct {
+	Submission         *submission `json:"submission"`
+	TeamSubmission     *submission `json:"teamsubmission"`
+	SubmissionsEnabled *bool       `json:"submissionsenabled"`
+	CanEditOwner       *bool       `json:"caneditowner"`
+	Locked             *bool       `json:"locked"`
+	Graded             *bool       `json:"graded"`
+	ExtensionDueDate   *int64      `json:"extensionduedate"`
+}
+
 type assignmentSubmissions struct {
 	AssignmentID int64        `json:"assignmentid"`
 	Submissions  []submission `json:"submissions"`
@@ -111,11 +128,12 @@ type moodleWarning struct {
 
 func newMoodleClient(baseURL, username, password, service string, httpClient *http.Client) *moodleClient {
 	return &moodleClient{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		username:   username,
-		password:   password,
-		service:    service,
-		httpClient: httpClient,
+		baseURL:      strings.TrimRight(baseURL, "/"),
+		username:     username,
+		password:     password,
+		service:      service,
+		httpClient:   httpClient,
+		newPublisher: newReminderPublisher,
 	}
 }
 
@@ -184,6 +202,19 @@ func (client *moodleClient) getSubmissions(ctx context.Context, token string, as
 	var response submissionsResponse
 	if err := client.postForm(ctx, "/webservice/rest/server.php", form, &response); err != nil {
 		return submissionsResponse{}, err
+	}
+	client.sanitizeWarnings(response.Warnings, token)
+	return response, nil
+}
+
+// getOwnSubmissionStatus leaves userid at Moodle's current-user default. A
+// personal worker never requests a classmate's records or a class-wide roster.
+func (client *moodleClient) getOwnSubmissionStatus(ctx context.Context, token string, assignmentID int64) (submissionStatusResponse, error) {
+	form := webServiceForm(token, "mod_assign_get_submission_status")
+	form.Set("assignid", fmt.Sprintf("%d", assignmentID))
+	var response submissionStatusResponse
+	if err := client.postForm(ctx, "/webservice/rest/server.php", form, &response); err != nil {
+		return submissionStatusResponse{}, err
 	}
 	client.sanitizeWarnings(response.Warnings, token)
 	return response, nil

@@ -3,7 +3,7 @@ FROM golang:1.27-alpine AS builder
 WORKDIR /app
 
 COPY go.mod go.sum ./
-COPY main.go moodle.go monitoring.go rabbitmq.go ./
+COPY main.go moodle.go monitoring.go rabbitmq.go calendar.go ./
 
 RUN CGO_ENABLED=0 go build -o monitoring .
 

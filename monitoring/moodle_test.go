@@ -236,6 +236,11 @@ func TestAggregatedWarningLogEmitsOneRecordPerOperationAndCode(t *testing.T) {
 
 func setValidConfigEnvironment(t *testing.T) {
 	t.Helper()
+	t.Setenv("MOODLE_ICAL_URL", "")
+	t.Setenv("MOODLE_SOURCE", "auto")
+	t.Setenv("NOTIFICATION_EMAIL", "student@example.test")
+	t.Setenv("MOODLE_ICAL_EMAIL", "")
+	t.Setenv("MOODLE_ICAL_TIMEZONE", "")
 	t.Setenv("MOODLE_URL", "https://moodle.example.test")
 	t.Setenv("MOODLE_USERNAME", "user")
 	t.Setenv("MOODLE_PASSWORD", "password")
