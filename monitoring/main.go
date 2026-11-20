@@ -28,6 +28,8 @@ type config struct {
 	moodlePassword    string
 	moodleService     string
 	moodleSource      string
+	moodleToken       string
+	courseMode        bool
 	notificationEmail string
 	moodleICalURL     string
 	moodleICalEmail   string
@@ -97,6 +99,13 @@ func main() {
 	defer stop()
 
 	client := newMonitoringSource(cfg, &http.Client{Timeout: defaultHTTPTimeout})
+	if os.Getenv("MONITOR_ONCE") == "1" {
+		if err := client.monitor(ctx, logger); err != nil {
+			logger.Error("monitoring cycle failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	logger.Info(
 		"monitoring service started",
 		"interval", cfg.monitorInterval,
@@ -136,6 +145,16 @@ func loadConfig() (config, error) {
 		logLevel:          slog.LevelInfo,
 	}
 
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("MOODLE_MONITOR_MODE"))) {
+	case "", "personal":
+	case "course":
+		cfg.courseMode = true
+		if cfg.moodleSource != "api" {
+			return config{}, fmt.Errorf("course mode requires MOODLE_SOURCE=api")
+		}
+	default:
+		return config{}, fmt.Errorf("MOODLE_MONITOR_MODE must be personal or course")
+	}
 	if cfg.moodleSource == "" || cfg.moodleSource == "auto" {
 		cfg.moodleSource = "api"
 		if cfg.moodleICalURL != "" {
@@ -167,7 +186,7 @@ func loadConfig() (config, error) {
 			}
 		}
 	} else {
-		if !validCalendarEmail(cfg.notificationEmail) {
+		if !cfg.courseMode && !validCalendarEmail(cfg.notificationEmail) {
 			return config{}, fmt.Errorf("NOTIFICATION_EMAIL must be a recipient email address in personal API mode")
 		}
 		if cfg.moodleURL == "" {
@@ -180,11 +199,19 @@ func loadConfig() (config, error) {
 		if parsedURL.User != nil {
 			return config{}, fmt.Errorf("MOODLE_URL must not contain credentials")
 		}
-		if cfg.moodleUsername == "" {
-			return config{}, fmt.Errorf("MOODLE_USERNAME is required")
-		}
-		if cfg.moodlePassword == "" {
-			return config{}, fmt.Errorf("MOODLE_PASSWORD is required")
+		if tokenFile := strings.TrimSpace(os.Getenv("MOODLE_TOKEN_FILE")); tokenFile != "" {
+			token, err := os.ReadFile(tokenFile)
+			cfg.moodleToken = strings.TrimSpace(string(token))
+			if err != nil || cfg.moodleToken == "" {
+				return config{}, fmt.Errorf("MOODLE_TOKEN_FILE must contain a readable Moodle token")
+			}
+		} else {
+			if cfg.moodleUsername == "" {
+				return config{}, fmt.Errorf("MOODLE_USERNAME is required")
+			}
+			if cfg.moodlePassword == "" {
+				return config{}, fmt.Errorf("MOODLE_PASSWORD is required")
+			}
 		}
 		if cfg.moodleService == "" {
 			cfg.moodleService = "moodle_mobile_app"
@@ -225,6 +252,8 @@ func newMonitoringSource(cfg config, httpClient *http.Client) monitoringSource {
 	}
 	client := newMoodleClient(cfg.moodleURL, cfg.moodleUsername, cfg.moodlePassword, cfg.moodleService, httpClient)
 	client.email = cfg.notificationEmail
+	client.token = cfg.moodleToken
+	client.courseMode = cfg.courseMode
 	return client
 }
 
@@ -260,19 +289,20 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 	if err != nil {
 		return fmt.Errorf("authenticate with Moodle: %w", err)
 	}
-	logger.Info("authenticated with Moodle")
-
 	siteInfo, err := client.getSiteInfo(ctx, token)
 	if err != nil {
 		return fmt.Errorf("get site info: %w", err)
 	}
+	logger.Info("authenticated with Moodle")
 
 	courses, err := client.getMyCourses(ctx, token, siteInfo.UserID)
 	if err != nil {
 		return fmt.Errorf("get courses: %w", err)
 	}
 	summary := newCycleSummary(len(courses))
-	summary.enrolledStudents = 1
+	if !client.courseMode {
+		summary.enrolledStudents = 1
+	}
 	cycleCandidates := make([]reminderCandidate, 0)
 	logger.Info("discovered courses", "count", summary.courses)
 
@@ -302,6 +332,9 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 		now := time.Now().UTC()
 		eligibleAssignments := make([]assignment, 0, assignmentCount)
 		for _, assignmentCourse := range assignmentResponse.Courses {
+			if client.courseMode && assignmentCourse.ID != course.ID {
+				continue
+			}
 			for _, candidate := range assignmentCourse.Assignments {
 				if isAssignmentEligible(candidate, now) {
 					eligibleAssignments = append(eligibleAssignments, candidate)
@@ -317,6 +350,11 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 			"skipped", assignmentCount-len(eligibleAssignments),
 		)
 		if len(eligibleAssignments) == 0 {
+			continue
+		}
+		if client.courseMode {
+			cycleCandidates = append(cycleCandidates,
+				client.courseReminders(ctx, token, course.ID, eligibleAssignments, &summary, logger)...)
 			continue
 		}
 
@@ -345,6 +383,9 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 		}
 	}
 
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	published, err := publishReminderCandidates(ctx, client.newPublisher, cycleCandidates, logger)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -370,6 +411,67 @@ func monitorCycle(ctx context.Context, client *moodleClient, logger *slog.Logger
 		"duration", time.Since(startedAt).Round(time.Millisecond),
 	)
 	return nil
+}
+
+// courseReminders reads the active roster once and checks the bulk result for
+// each eligible assignment. Moodle can omit students who have never started.
+func (client *moodleClient) courseReminders(ctx context.Context, token string, courseID int64, assignments []assignment, summary *cycleSummary, logger *slog.Logger) []reminderCandidate {
+	users, err := client.getEnrolledUsers(ctx, token, courseID)
+	if err != nil {
+		summary.partialCoverage = true
+		logger.Error("could not retrieve enrolled users", "course_id", courseID, "error", err)
+		return nil
+	}
+	students, _ := countEnrolmentRoles(users)
+	summary.enrolledStudents += students
+	logger.Debug("active roster retrieved", "course_id", courseID, "students", students)
+
+	var candidates []reminderCandidate
+	for _, assignment := range assignments {
+		if ctx.Err() != nil {
+			break
+		}
+		response, err := client.getSubmissions(ctx, token, assignment.ID)
+		if err != nil {
+			summary.partialCoverage = true
+			logSubmissionFailure(logger, courseID, assignment.ID, err)
+			continue
+		}
+		summary.recordWarnings(logger, "get_submissions", courseID, assignment.ID, response.Warnings)
+		identified := identifyReminderCandidates(courseID, assignment, users, response, client.baseURL)
+		if !identified.SubmissionDataOK {
+			summary.partialCoverage = true
+			logger.Warn("bulk submission status unavailable", "course_id", courseID, "assignment_id", assignment.ID, "reason", identified.UnavailableReason)
+			continue
+		}
+		summary.submissions += identified.SubmissionCount
+		candidates = append(candidates, identified.Candidates...)
+		pending := len(identified.Candidates)
+		completed := identified.CompletedStudents
+		for _, student := range identified.StudentsWithoutSubmissions {
+			status, err := client.getSubmissionStatus(ctx, token, assignment.ID, student.ID)
+			if err != nil {
+				summary.partialCoverage = true
+				logSubmissionFailure(logger, courseID, assignment.ID, err)
+				continue
+			}
+			summary.recordWarnings(logger, operationSubmissions, courseID, assignment.ID, status.Warnings)
+			individual := identifyPersonalReminder(courseID, assignment, student.ID, strings.TrimSpace(student.Email), status, client.baseURL)
+			if !individual.SubmissionDataOK {
+				summary.partialCoverage = true
+				logger.Warn("individual submission status unavailable", "course_id", courseID, "assignment_id", assignment.ID, "user_id", student.ID, "reason", individual.UnavailableReason)
+				continue
+			}
+			pending += len(individual.Candidates)
+			completed += individual.CompletedStudents
+			candidates = append(candidates, individual.Candidates...)
+		}
+		logger.Debug("course submissions checked", "course_id", courseID, "assignment_id", assignment.ID,
+			"assignment", assignment.Name, "bulk_submissions", identified.SubmissionCount,
+			"individual_checks", len(identified.StudentsWithoutSubmissions), "completed", completed, "pending", pending)
+	}
+	summary.candidates += len(candidates)
+	return candidates
 }
 
 func newCycleSummary(courses int) cycleSummary {

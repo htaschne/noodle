@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -18,6 +19,8 @@ type moodleClient struct {
 	password     string
 	service      string
 	email        string
+	token        string
+	courseMode   bool
 	httpClient   *http.Client
 	newPublisher reminderPublisherFactory
 }
@@ -138,6 +141,9 @@ func newMoodleClient(baseURL, username, password, service string, httpClient *ht
 }
 
 func (client *moodleClient) authenticate(ctx context.Context) (string, error) {
+	if client.token != "" {
+		return client.token, nil
+	}
 	form := url.Values{
 		"username": {client.username},
 		"password": {client.password},
@@ -189,6 +195,8 @@ func (client *moodleClient) getAssignments(ctx context.Context, token string, co
 func (client *moodleClient) getEnrolledUsers(ctx context.Context, token string, courseID int64) ([]enrolledUser, error) {
 	form := webServiceForm(token, "core_enrol_get_enrolled_users")
 	form.Set("courseid", fmt.Sprintf("%d", courseID))
+	form.Set("options[0][name]", "onlyactive")
+	form.Set("options[0][value]", "1")
 	var users []enrolledUser
 	if err := client.postForm(ctx, "/webservice/rest/server.php", form, &users); err != nil {
 		return nil, err
@@ -203,6 +211,13 @@ func (client *moodleClient) getSubmissions(ctx context.Context, token string, as
 	if err := client.postForm(ctx, "/webservice/rest/server.php", form, &response); err != nil {
 		return submissionsResponse{}, err
 	}
+	// Moodle 4.5 returns warning 3 alongside a valid empty assignment result.
+	// Individual status checks still determine whether each student can submit.
+	if result, found := findAssignmentSubmissions(assignmentID, response.Assignments); found && len(result.Submissions) == 0 {
+		response.Warnings = slices.DeleteFunc(response.Warnings, func(warning moodleWarning) bool {
+			return warning.Item == "module" && warning.ItemID == assignmentID && warning.WarningCode == "3"
+		})
+	}
 	client.sanitizeWarnings(response.Warnings, token)
 	return response, nil
 }
@@ -210,8 +225,15 @@ func (client *moodleClient) getSubmissions(ctx context.Context, token string, as
 // getOwnSubmissionStatus leaves userid at Moodle's current-user default. A
 // personal worker never requests a classmate's records or a class-wide roster.
 func (client *moodleClient) getOwnSubmissionStatus(ctx context.Context, token string, assignmentID int64) (submissionStatusResponse, error) {
+	return client.getSubmissionStatus(ctx, token, assignmentID, 0)
+}
+
+func (client *moodleClient) getSubmissionStatus(ctx context.Context, token string, assignmentID, userID int64) (submissionStatusResponse, error) {
 	form := webServiceForm(token, "mod_assign_get_submission_status")
 	form.Set("assignid", fmt.Sprintf("%d", assignmentID))
+	if userID > 0 {
+		form.Set("userid", fmt.Sprintf("%d", userID))
+	}
 	var response submissionStatusResponse
 	if err := client.postForm(ctx, "/webservice/rest/server.php", form, &response); err != nil {
 		return submissionStatusResponse{}, err

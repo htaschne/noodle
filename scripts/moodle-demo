@@ -1,0 +1,42 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+
+instance=${NOODLE_DEMO_INSTANCE:-local}
+case "$instance" in
+    *[!a-z0-9-]*) printf '%s\n' 'Use lowercase letters, digits or hyphens in NOODLE_DEMO_INSTANCE.' >&2; exit 1 ;;
+esac
+credentials=".env.moodle-demo-$instance"
+if [ ! -f "$credentials" ]; then
+    umask 077
+    rabbit_password=$(openssl rand -hex 18)
+    database_password=$(openssl rand -hex 18)
+    admin_password=$(openssl rand -hex 18)
+    student_password=$(openssl rand -hex 18)
+    (set -C; cat > "$credentials" <<EOF
+RABBITMQ_USER=noodle_demo
+RABBITMQ_PASSWORD=$rabbit_password
+RABBITMQ_URL=amqp://noodle_demo:$rabbit_password@rabbitmq:5672/
+DEMO_MOODLE_DB_PASSWORD=$database_password
+DEMO_MOODLE_ADMIN_PASSWORD=Demo!$admin_password
+DEMO_MOODLE_STUDENT_PASSWORD=Demo!$student_password
+EOF
+    )
+fi
+
+unset RABBITMQ_USER RABBITMQ_PASSWORD RABBITMQ_URL DEMO_MOODLE_DB_PASSWORD \
+    DEMO_MOODLE_ADMIN_PASSWORD DEMO_MOODLE_STUDENT_PASSWORD
+compose() {
+    docker compose --env-file "$credentials" -p "noodle-moodle-$instance" \
+        -f compose.yaml -f compose.moodle.yaml "$@"
+}
+
+case "${1:-up}" in
+    up)
+        if [ "$#" -gt 0 ]; then shift; fi
+        compose up --build -d --wait --wait-timeout 180 "$@"
+        printf 'Moodle: http://moodle.localhost:18080\nRabbitMQ: http://localhost:25672\nMailpit: http://localhost:18025\nCredentials: %s\n' "$credentials"
+        ;;
+    poll) compose run --rm --no-deps -e MONITOR_ONCE=1 monitoring ;;
+    *) compose "$@" ;;
+esac

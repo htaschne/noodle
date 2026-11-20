@@ -18,6 +18,10 @@ The four project acceptance scenarios are automated against fictional Moodle RES
 
 The [presentation and demonstration script](docs/PRESENTATION.md) covers the implementation, the four acceptance scenarios, and the documented limitations.
 
+## Self-hosted Moodle demo
+
+Run `./scripts/moodle-demo up` to bring up a real local Moodle, a fictitious course, and course-wide reminders through Mailpit. See the [demo guide](docs/MOODLE_DEMO.md) for sign-in, polling, and recording steps.
+
 ## Development
 
 ### Prerequisites
@@ -46,7 +50,7 @@ NOTIFICATION_EMAIL=<your reminder email>
 MONITOR_INTERVAL=1h
 ```
 
-API mode uses `mod_assign_get_submission_status` for the authenticated student. No access to classmates' emails or submissions is needed. Existing `MOODLE_TOKEN` is retained for development tools; the worker currently authenticates using username and password.
+Personal API mode uses `mod_assign_get_submission_status` for the authenticated student. No access to classmates' emails or submissions is needed. API authentication uses the configured username and password by default. Set `MOODLE_TOKEN_FILE` to use an existing token from a mounted file.
 
 For calendar-only reminders, follow the export steps in `.env.example`, set `MOODLE_SOURCE=ical`, `MOODLE_ICAL_URL`, and `MOODLE_ICAL_EMAIL` (or `NOTIFICATION_EMAIL`). With `MOODLE_SOURCE=auto` or unset, a configured calendar URL takes precedence; otherwise the personal API is used. Explicit `api` mode preserves a saved calendar URL while selecting submission-aware monitoring. API failures do not silently switch to calendar-only reminders.
 

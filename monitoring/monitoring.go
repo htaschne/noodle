@@ -27,13 +27,14 @@ type reminderCandidate struct {
 }
 
 type candidateIdentification struct {
-	Candidates           []reminderCandidate
-	SubmissionDataOK     bool
-	UnavailableReason    string
-	SubmissionCount      int
-	CompletedStudents    int
-	IncompleteStudents   int
-	UnclassifiedStudents int
+	Candidates                 []reminderCandidate
+	SubmissionDataOK           bool
+	UnavailableReason          string
+	SubmissionCount            int
+	CompletedStudents          int
+	IncompleteStudents         int
+	UnclassifiedStudents       int
+	StudentsWithoutSubmissions []enrolledUser
 }
 
 type resolvedSubmission struct {
@@ -107,8 +108,8 @@ func identifyPersonalReminder(courseID int64, candidate assignment, userID int64
 
 func identifyReminderCandidates(courseID int64, candidate assignment, users []enrolledUser, response submissionsResponse, moodleURL string) candidateIdentification {
 	result := candidateIdentification{}
-	if candidate.CMID <= 0 {
-		result.UnavailableReason = "assignment course module ID missing"
+	if courseID <= 0 || candidate.ID <= 0 || candidate.CMID <= 0 {
+		result.UnavailableReason = "invalid assignment metadata"
 		return result
 	}
 	if len(response.Warnings) > 0 {
@@ -128,7 +129,7 @@ func identifyReminderCandidates(courseID int64, candidate assignment, users []en
 	deadline := time.Unix(candidate.DueDate, 0).UTC()
 
 	for _, user := range users {
-		if !hasStudentRole(user.Roles) {
+		if user.ID <= 0 || !hasStudentRole(user.Roles) {
 			continue
 		}
 
@@ -137,6 +138,7 @@ func identifyReminderCandidates(courseID int64, candidate assignment, users []en
 			// Moodle does not guarantee that a missing record means the user has
 			// not submitted, so absence is never used as evidence of pending work.
 			result.UnclassifiedStudents++
+			result.StudentsWithoutSubmissions = append(result.StudentsWithoutSubmissions, user)
 			continue
 		}
 		if resolved.ambiguous {
@@ -159,7 +161,7 @@ func identifyReminderCandidates(courseID int64, candidate assignment, users []en
 		}
 
 		email := strings.TrimSpace(user.Email)
-		if email == "" {
+		if !validCalendarEmail(email) {
 			continue
 		}
 

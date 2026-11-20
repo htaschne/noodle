@@ -1,0 +1,81 @@
+# Use scripts/moodle-demo to supply isolated project names and credentials.
+services:
+  moodle-db:
+    image: postgres:16-alpine@sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857
+    environment:
+      POSTGRES_DB: moodle
+      POSTGRES_USER: moodle
+      POSTGRES_PASSWORD: ${DEMO_MOODLE_DB_PASSWORD:?use scripts/moodle-demo}
+    volumes:
+      - moodle_db:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, moodle, -d, moodle]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  moodle:
+    build: ./demo/moodle
+    environment:
+      DEMO_MOODLE_DB_PASSWORD: ${DEMO_MOODLE_DB_PASSWORD:?use scripts/moodle-demo}
+      DEMO_MOODLE_ADMIN_PASSWORD: ${DEMO_MOODLE_ADMIN_PASSWORD:?use scripts/moodle-demo}
+      DEMO_MOODLE_STUDENT_PASSWORD: ${DEMO_MOODLE_STUDENT_PASSWORD:?use scripts/moodle-demo}
+      MOODLE_WWWROOT: http://moodle.localhost:18080
+    depends_on:
+      moodle-db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18080:18080"
+    networks:
+      default:
+        aliases: [moodle.localhost]
+    volumes:
+      - moodle_data:/var/www/moodledata
+      - moodle_token:/run/noodle-moodle
+    healthcheck:
+      test: [CMD, curl, -fsS, --output, /dev/null, http://moodle.localhost:18080/login/index.php]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  monitoring:
+    env_file: !reset []
+    environment:
+      MOODLE_SOURCE: api
+      MOODLE_MONITOR_MODE: course
+      MOODLE_URL: http://moodle.localhost:18080
+      MOODLE_TOKEN_FILE: /run/noodle-moodle/token
+      LOG_LEVEL: debug
+    depends_on:
+      moodle:
+        condition: service_healthy
+    volumes:
+      - moodle_token:/run/noodle-moodle:ro
+
+  rabbitmq:
+    hostname: rabbitmq
+    ports: !override
+      - "127.0.0.1:25672:15672"
+
+  notifications:
+    env_file: !reset []
+    environment:
+      RABBITMQ_USER: ${RABBITMQ_USER:?use scripts/moodle-demo}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?use scripts/moodle-demo}
+      NOTIFICATIONS_DELIVERY_RETRY_DELAY: 20s
+
+  mailpit:
+    ports: !override
+      - "127.0.0.1:18025:8025"
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_ENABLE_CHAOS: "true"
+    volumes:
+      - mailpit_data:/data
+
+volumes:
+  moodle_db:
+  moodle_data:
+  moodle_token:
+  mailpit_data:
