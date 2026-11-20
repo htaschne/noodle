@@ -1,11 +1,12 @@
-# Use scripts/moodle-demo to supply isolated project names and credentials.
+name: noodle-moodle-local
+
 services:
   moodle-db:
     image: postgres:16-alpine@sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857
     environment:
       POSTGRES_DB: moodle
       POSTGRES_USER: moodle
-      POSTGRES_PASSWORD: ${DEMO_MOODLE_DB_PASSWORD:?use scripts/moodle-demo}
+      POSTGRES_PASSWORD: ${DEMO_MOODLE_DB_PASSWORD:?set DEMO_MOODLE_DB_PASSWORD in .env}
     volumes:
       - moodle_db:/var/lib/postgresql/data
     healthcheck:
@@ -17,9 +18,9 @@ services:
   moodle:
     build: ./demo/moodle
     environment:
-      DEMO_MOODLE_DB_PASSWORD: ${DEMO_MOODLE_DB_PASSWORD:?use scripts/moodle-demo}
-      DEMO_MOODLE_ADMIN_PASSWORD: ${DEMO_MOODLE_ADMIN_PASSWORD:?use scripts/moodle-demo}
-      DEMO_MOODLE_STUDENT_PASSWORD: ${DEMO_MOODLE_STUDENT_PASSWORD:?use scripts/moodle-demo}
+      DEMO_MOODLE_DB_PASSWORD: ${DEMO_MOODLE_DB_PASSWORD:?set DEMO_MOODLE_DB_PASSWORD in .env}
+      DEMO_MOODLE_ADMIN_PASSWORD: ${DEMO_MOODLE_ADMIN_PASSWORD:?set DEMO_MOODLE_ADMIN_PASSWORD in .env}
+      DEMO_MOODLE_STUDENT_PASSWORD: ${DEMO_MOODLE_STUDENT_PASSWORD:?set DEMO_MOODLE_STUDENT_PASSWORD in .env}
       MOODLE_WWWROOT: http://moodle.localhost:18080
     depends_on:
       moodle-db:
@@ -46,7 +47,9 @@ services:
       MOODLE_MONITOR_MODE: course
       MOODLE_URL: http://moodle.localhost:18080
       MOODLE_TOKEN_FILE: /run/noodle-moodle/token
+      MONITOR_INTERVAL: 1m
       LOG_LEVEL: debug
+      RABBITMQ_URL: ${DEMO_RABBITMQ_URL:-${RABBITMQ_URL}}
     depends_on:
       moodle:
         condition: service_healthy
@@ -55,14 +58,17 @@ services:
 
   rabbitmq:
     hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${DEMO_RABBITMQ_USER:-${RABBITMQ_USER}}
+      RABBITMQ_DEFAULT_PASS: ${DEMO_RABBITMQ_PASSWORD:-${RABBITMQ_PASSWORD}}
     ports: !override
       - "127.0.0.1:25672:15672"
 
   notifications:
     env_file: !reset []
     environment:
-      RABBITMQ_USER: ${RABBITMQ_USER:?use scripts/moodle-demo}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?use scripts/moodle-demo}
+      RABBITMQ_USER: ${DEMO_RABBITMQ_USER:-${RABBITMQ_USER}}
+      RABBITMQ_PASSWORD: ${DEMO_RABBITMQ_PASSWORD:-${RABBITMQ_PASSWORD}}
       NOTIFICATIONS_DELIVERY_RETRY_DELAY: 20s
 
   mailpit:

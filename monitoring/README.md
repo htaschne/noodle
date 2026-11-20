@@ -27,13 +27,12 @@ iCalendar does not expose assignment submission state, enrolment roles, team set
 
 ## Running and testing
 
-Complete [Environment](../README.md#environment) before running the worker. The worker reads the process environment and does not load `.env` files itself.
+Create the root `.env` using the [quick start](../README.md#quick-start) and set `RABBITMQ_PASSWORD`. For submission-aware monitoring, set `MOODLE_SOURCE=api`, `MOODLE_URL`, `MOODLE_USERNAME`, `MOODLE_PASSWORD`, and `NOTIFICATION_EMAIL`. For calendar-only monitoring, use the [calendar configuration](#calendar-configuration) above. For a worker with a mounted API token, set `MOODLE_TOKEN_FILE` to the path inside the container.
 
-From the repository root:
+Start the personal stack from the repository root:
 
 ```sh
-docker build -t noodle-monitoring:latest ./monitoring
-docker run --rm --name noodle-monitoring --env-file .env noodle-monitoring:latest
+docker compose up --build -d
 ```
 
 Run the unit tests from `monitoring/`:

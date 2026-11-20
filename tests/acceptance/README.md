@@ -25,7 +25,7 @@ The existing broker-only integration test can also run with `RABBITMQ_URL` confi
 
 ## Demonstration
 
-The verbose transcript names each criterion as it passes. For a presentation, rerun the command and show the four PASS lines. All generated addresses and credentials are fictional. The isolated stack is cleaned up automatically; the normal local stack's Mailpit UI remains available at `http://localhost:8025` when running `docker compose up --build -d`.
+The verbose transcript names each criterion as it passes. For a presentation, rerun the command and show the four PASS lines. All generated addresses and credentials are fictional. The isolated stack is cleaned up automatically. The personal monitoring stack uses Mailpit at `http://localhost:8025`. The Moodle demo uses the ports in the [quick start](../../README.md#quick-start).
 
 ## Limits
 
