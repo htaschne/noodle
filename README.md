@@ -99,3 +99,6 @@ Run service tests with the local toolchains:
 ## Moodle API inspection
 
 The optional [Bruno collection](bruno/) mirrors the Moodle calls used by Monitoring for development and troubleshooting. It is not a runtime dependency.
+
+## Video Demo
+https://youtu.be/7tYmvFsaAiE
