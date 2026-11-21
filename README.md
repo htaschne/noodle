@@ -31,3 +31,9 @@ docker compose -f compose.yaml -f compose.moodle.yaml up --build -d --wait
 ---
 
 You can find the assignment reports [here](reports/)
+
+---
+Contributors
+- [Agatha](https://github.com/htaschne)
+- [Gustavo](https://github.com/gustevito)
+- [Lorenzo](https://github.com/lorenzoalig)
