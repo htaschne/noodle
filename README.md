@@ -1,4 +1,4 @@
-# Noodle
+# Noodle 🍜 Notification Service for Moodle
 
 Noodle monitors Moodle assignments and sends email reminders for upcoming deadlines.
 
