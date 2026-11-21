@@ -25,3 +25,7 @@ docker compose -f compose.yaml -f compose.moodle.yaml up --build -d --wait
 - [Mailpit](http://localhost:18025) shows captured reminder emails.
 
 [Demo recording guide](docs/MOODLE_DEMO.md) · [Personal Moodle and calendar setup](monitoring/README.md#running-and-testing)
+
+---
+
+You can find the assignment reports [here](reports/)

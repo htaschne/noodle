@@ -5,3 +5,6 @@ bruno/.env
 bruno/secrets.json
 monitoring/monitoring
 notifications/target/
+*.tex
+*.fdb_latexmk
+*.fls
