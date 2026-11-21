@@ -1,8 +1,10 @@
 # Noodle 🍜 Notification Service for Moodle
 
+> Find this repo: https://github.com/htaschne/noodle
+
 Noodle monitors Moodle assignments and sends email reminders for upcoming deadlines.
 
-**[Watch the demo](<https://youtu.be/7tYmvFsaAiE>)**
+**[Watch the demo](https://youtu.be/7tYmvFsaAiE)**
 
 ## Quick start
 
